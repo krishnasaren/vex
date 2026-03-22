@@ -1,1 +1,39 @@
-# .github/workflows/nightly.yml
+name: Nightly
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential cmake valgrind
+
+      - name: Build (Release)
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+
+      - name: Run full tests
+        run: |
+          cd build
+          ctest
+
+      - name: Memory check
+        run: |
+          cd build
+          valgrind ./your_compiler --version
+
+      - name: Benchmark
+        run: |
+          cd build
+          ./benchmarks/run_all.sh
