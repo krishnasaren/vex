@@ -1,0 +1,4639 @@
+// ╔══════════════════════════════════════════════════════════════════════════════╗
+// ║          VEX LANGUAGE v4.0 — COMPLETE SPECIFICATION & SOURCE FILE           ║
+// ║                                                                              ║
+// ║  Compiled · Native · No GC · Safe · Clean Syntax                            ║
+// ║  File = Module. No package declaration ever needed.                          ║
+// ╚══════════════════════════════════════════════════════════════════════════════╝
+//
+// DESIGN GOALS:
+//   1. Every symbol has ONE meaning — compiler-friendly, zero ambiguity
+//   2. Shorter code = more readable (not more cryptic)
+//   3. C-level power with Python-level clarity
+//   4. Consistent rules from top to bottom — no exceptions
+
+// ──────────────────────────────────────────────────────────────────────────────
+// IMPORTS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+// THREE IMPORT FORMS:
+//   import module_path                        ← Form 1: always use moduleName::item
+//   import module_path as alias               ← Form 1: aliased, use alias::item
+//   import module_path { name1, name2 }       ← Form 2: name1 and name2 usable directly
+//   import module_path { name as localName }  ← Form 2: renamed direct access
+//   import module_path { * }                  ← Form 3: all pub names usable directly
+//
+// Forms 2 and 3: direct name OR qualified moduleName::name — both always work.
+// The last :: segment is ALWAYS a module filename (.vex or .vxl).
+// You never write the extension — the compiler resolves it.
+// NEVER: import std::io::println   ← no println.vex exists → COMPILE ERROR
+// NEVER: import std::math::PI      ← no PI.vex exists → use: import std::math { PI }
+
+import std::io
+import std::math
+import std::mem
+import std::thread
+import std::fs
+import std::regex
+import std::net
+import std::time
+import std::async
+import std::ffi
+import std::collections
+import std::sync
+import std::channel
+import std::text
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 1 — PRIMITIVE TYPES
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  INTEGERS (signed):   int8  int16  int32  int64  int128
+//                       int = int64 on 64-bit platforms
+//  INTEGERS (unsigned): uint8  uint16  uint32  uint64  uint128
+//                       uint = uint64 on 64-bit platforms
+//  FLOATS:              float32  float64
+//                       float = float64 (default)
+//  TEXT:                char   (single Unicode codepoint, 4 bytes)
+//                       str    (UTF-8 immutable string, see STR1–STR8 for rules)
+//                       byte   = uint8 alias
+//  LOGIC:               bool   (true / false)
+//  SPECIAL:             void   (no value — return type only)
+//                       any    (holds any type, checked at runtime)
+//                       never  (function never returns — panic, infinite loop)
+//                       type   (a type itself, for comptime)
+//
+//  POINTER TYPES:
+//    *T     raw pointer      unsafe, no lifetime, no ownership
+//    ^T     owned pointer    heap, single owner, freed at scope end
+//    ~T     shared pointer   ref-counted heap, freed at refcount=0
+//    &T     borrow ref       non-owning, lifetime-checked, always valid
+//    &mut T mutable borrow   exclusive, non-owning, lifetime-checked
+//    T?     nullable T       any type can be nullable
+//
+//  COMPOUND TYPES:
+//    [N]T         fixed-size array (stack, N must be comptime)
+//    []T          dynamic list (heap, grows automatically)
+//    [K:V]        hash map (iteration order unspecified — see COL2)
+//    (A, B, C)    tuple — fixed, ordered, mixed types
+//    fn(A,B)->R   function type
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 2 — VARIABLES
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn variablesDemo() {
+
+    // ── Declaration forms ─────────────────────────────────────────────────────
+    var a: int = 10
+    let b: str = "hello"
+    const C: int = 100
+
+    var x := 42
+    let y := "world"
+    let z := true
+
+    // ── Multiple declaration ──────────────────────────────────────────────────
+    var p, q, r := 1, 2, 3
+    let m, n    := "foo", "bar"
+
+    // ── Swap ──────────────────────────────────────────────────────────────────
+    p, q = q, p
+
+    // ── Nullable types ────────────────────────────────────────────────────────
+    var maybeAge: int? = null
+    var name: str  = "Alice"
+    maybeAge = 25
+    maybeAge = null
+
+    let age  := maybeAge ?? 0
+    let msg  := maybeAge?.toString() ?? "unknown"
+
+    // ── Type casting ──────────────────────────────────────────────────────────
+    let f   := float64(42)
+    let i   := int(3.99)           // truncates to 3
+    let s   := str(42)
+    let num := int?("abc")         // returns null on failure
+    let ok  := int("99")           // panics if invalid
+
+    // Integer overflow — explicit operators available in all build modes
+    var overflowDemo: int8 = 127
+    let wrapped   := overflowDemo +% 1    // -128   (wrapping add)
+    let saturated := overflowDemo +| 1    // 127    (saturating add, clamps at max)
+    let wrapped2  := overflowDemo -% 200  // wrapping subtract
+
+    // Checked cast (returns T? — null if value does not fit)
+    let big: int64 = 999_999_999_999
+    let small := int32.checked(big)       // int32? → null (does not fit)
+    let trunc := int32.wrap(big)          // int32  → truncates to low 32 bits
+
+    // ── Discard ───────────────────────────────────────────────────────────────
+    let _ = expensiveButIgnored()
+
+    // ── sizeof / typeof / alignof ─────────────────────────────────────────────
+    let sz  := sizeof(int64)     // 8  (comptime)
+    let al  := alignof(float64)  // 8  (comptime)
+    let tn  := typeof(x)         // "int" (runtime string)
+    let tid := typeid(x)         // unique integer ID of type (comptime)
+}
+
+fn expensiveButIgnored() -> int = 42
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 2 (Variables) in vex_spec_final.vex
+// as SECTION 2-A — TYPE INFERENCE PATTERNS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 2-A — TYPE INFERENCE PATTERNS
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn typeInferenceDemo() {
+
+    // ── Literal defaults ──────────────────────────────────────────────────────
+    var a := 42            // int   (int64 on 64-bit)
+    var b := 3.14          // float (float64)
+    var c := "hello"       // str
+    var d := 'A'           // char
+    var e := true          // bool
+
+    // ── Suffix overrides default ──────────────────────────────────────────────
+    var f := 42u8          // uint8
+    var g := 42i16         // int16
+    var h := 3.14f         // float32
+    var j := 42L           // int64 (explicit, same as int on 64-bit)
+
+    // ── Context-driven narrowing ──────────────────────────────────────────────
+    var n: int8    = 100   // 100 treated as int8 (fits)
+    var p: float32 = 1.0   // 1.0 treated as float32
+    // var bad: int8 = 200  // COMPILE ERROR: 200 does not fit in int8
+
+    // ── Empty collection requires context ────────────────────────────────────
+    var list1: []int   = []              // OK — context provides element type
+    var map1:  [str:int] = [:]           // OK — context provides key/value types
+    var set1:  {}str   = {}              // OK — context provides element type
+    // var list2 := []                   // COMPILE ERROR: cannot infer type
+
+    // ── Lambda inference from call-site ──────────────────────────────────────
+    let nums := [1, 2, 3, 4, 5]
+    let doubled := nums.map(|x| -> x * 2)      // x inferred as int from []int
+    let evens   := nums.filter(|x| -> x % 2 == 0)
+
+    // Lambda must be typed when used standalone
+    let f2: fn(int) -> int = |x| -> x + 1     // x inferred from fn type
+    // let f3 := |x| -> x + 1                  // COMPILE ERROR: x type unknown
+
+    // ── Generic inference ─────────────────────────────────────────────────────
+    fn wrap<T>(x: T) -> []T = [x]
+    let wi := wrap(42)            // T inferred as int → []int
+    let ws := wrap("hello")       // T inferred as str → []str
+    // let wm := wrap(maxOf(3, 5.0))  // COMPILE ERROR: conflicting T (int vs float64)
+    let wm := wrap(maxOf<float64>(3.0, 5.0))  // explicit T resolves it → []float64
+
+    // ── Null inference ────────────────────────────────────────────────────────
+    var q: int? = null             // OK — T? context from annotation
+    var r := (true ? 42 : null)    // r: int?  (int arm + null arm → int?)
+    // var s := null                // COMPILE ERROR: cannot infer T in T?
+
+    fn maybeInt(b2: bool) -> int? {
+        if b2 { 42 } else { null }  // OK — return type int? is annotated
+    }
+
+    // ── Tuple inference ───────────────────────────────────────────────────────
+    let t := (1, "hi", true)          // (int, str, bool)
+    let (ta, tb, tc) := t             // ta:int, tb:str, tc:bool
+    let (_, tb2, _) := t              // tb2:str (others discarded)
+
+    // ── Match arm type unification ────────────────────────────────────────────
+    let label := match ta {
+        1 => "one"
+        2 => "two"
+        _ => "other"
+    }                                 // label: str (all arms produce str)
+
+    let maybeLabel: str? = match ta {
+        1 => "one"               // str
+        _ => null                // null — auto-lifted to str?
+    }                            // maybeLabel: str?
+
+    io::println(f"a={a} b={b} c={c} f={f} doubled={doubled}")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 3 — LITERALS
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn literalsDemo() {
+    // Integer literals
+    let dec  := 1_000_000
+    let hex  := 0xFF_A0
+    let bin  := 0b1010_1100
+    let oct  := 0o755
+    let big  := 42L
+    let u    := 42u
+    let u8   := 255u8
+    let i16  := 1000i16
+
+    // Float literals
+    let f1   := 3.14
+    let f2   := 3.14f
+    let f3   := 1.5e10
+    let f4   := 0.001_5
+
+    // String literals
+    let s1   := "hello\nworld"
+    let s2   := r"\n is not an escape"
+    let s3   := f"Value is {dec}"
+    let s4   := f"Math: {1 + 2}"
+    let s5   := f"Hex: {hex:#x}"
+    let s6   := `
+        SELECT *
+        FROM users
+        WHERE active = true
+    `
+
+    // Char literal
+    let c1   := 'A'
+    let c2   := '\n'
+    let c3   := '\u{1F600}'        // Unicode codepoint 😀
+
+    // Bool
+    let yes  := true
+    let no   := false
+
+    // Array / list
+    let arr : [3]int  = [1, 2, 3]
+    let list: []int   = [1, 2, 3, 4]
+
+    // Map (iteration order unspecified per COL2)
+    let scores: [str:int] = ["Alice": 95, "Bob": 87]
+
+    // Tuple
+    let pair  : (int, str)     = (42, "hello")
+    let triple: (str,int,bool) = ("x", 1, true)
+
+    // Null
+    let nothing: str? = null
+
+    // Duration literals
+    let t1 := 1000ms
+    let t2 := 5s
+    let t3 := 500us
+    let t4 := 100ns
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 3 (Literals) in vex_spec_final.vex
+// as SECTION 3-A — FORMAT STRING SPECIFIERS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 3-A — FORMAT STRING SPECIFIERS
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn formatSpecDemo() {
+
+    // ── Integer formatting ────────────────────────────────────────────────────
+    let n := 255
+    io::println(f"{n}")           // "255"       default decimal
+    io::println(f"{n:d}")         // "255"       explicit decimal
+    io::println(f"{n:b}")         // "11111111"  binary
+    io::println(f"{n:#b}")        // "0b11111111" binary with prefix
+    io::println(f"{n:o}")         // "377"       octal
+    io::println(f"{n:#o}")        // "0o377"     octal with prefix
+    io::println(f"{n:x}")         // "ff"        hex lowercase
+    io::println(f"{n:#x}")        // "0xff"      hex with prefix
+    io::println(f"{n:X}")         // "FF"        hex uppercase
+    io::println(f"{n:#X}")        // "0XFF"      hex uppercase with prefix
+    io::println(f"{n:08d}")       // "00000255"  zero-pad to width 8
+    io::println(f"{n:>10d}")      // "       255" right-align width 10
+    io::println(f"{n:<10d}")      // "255       " left-align width 10
+    io::println(f"{n:^10d}")      // "   255    " center width 10
+    io::println(f"{n:+d}")        // "+255"      always show sign
+    io::println(f"{ -n:+d}")      // "-255"      sign shown for negative too
+
+    // Grouping separators
+    let big := 1_234_567
+    io::println(f"{big:_d}")      // "1_234_567"  underscore groups
+    io::println(f"{big:,d}")      // "1,234,567"  comma groups
+
+    // ── Float formatting ──────────────────────────────────────────────────────
+    let pi := 3.14159265358979
+    io::println(f"{pi}")          // "3.14159265358979"  default (full precision)
+    io::println(f"{pi:.2f}")      // "3.14"
+    io::println(f"{pi:.4f}")      // "3.1416"     rounds last digit
+    io::println(f"{pi:10.2f}")    // "      3.14"  width 10, 2 decimal places
+    io::println(f"{pi:010.2f}")   // "0000003.14"  zero-padded
+    io::println(f"{pi:+.3f}")     // "+3.142"      sign always shown
+    io::println(f"{pi:e}")        // "3.14159265358979e+00"
+    io::println(f"{pi:.2e}")      // "3.14e+00"
+    io::println(f"{pi:.2E}")      // "3.14E+00"    uppercase E
+    io::println(f"{pi:g}")        // "3.14159"     shortest form
+    io::println(f"{0.00001:g}")   // "1e-05"       switches to sci when shorter
+    io::println(f"{0.5:%}")       // "50%"         percentage
+    io::println(f"{0.1234:_.2%}") // "12.34%"      (underscore grouping + %)
+
+    // ── String formatting ─────────────────────────────────────────────────────
+    let s := "hello"
+    io::println(f"{s}")           // "hello"
+    io::println(f"{s:>10s}")      // "     hello"  right-align
+    io::println(f"{s:<10s}")      // "hello     "  left-align
+    io::println(f"{s:^10s}")      // "  hello   "  center
+    io::println(f"{s:*^10s}")     // "**hello***"  center with * fill
+    io::println(f"{s:.3s}")       // "hel"         truncate to 3 chars
+    io::println(f"{s:->10s}")     // "-----hello"  right-align with - fill
+
+    // ── Char and pointer formatting ───────────────────────────────────────────
+    let c := 'A'
+    io::println(f"{c:c}")         // "A"
+    io::println(f"{65:c}")        // "A"    int → char (Unicode codepoint 65)
+
+    var x := 42
+    let p: &int = &x
+    io::println(f"{p:p}")         // "0x7ffee1234abc"  pointer address
+
+    // ── Dynamic width and precision ───────────────────────────────────────────
+    let width     := 12
+    let precision := 3
+    io::println(f"{pi:{width}.{precision}f}")   // "       3.142"  dynamic
+
+    // ── Conversion flags ─────────────────────────────────────────────────────
+    struct MyType { x: int, y: int, op str() -> str = f"MyType({self.x},{self.y})" }
+    let mt := MyType { x: 1, y: 2 }
+    io::println(f"{mt}")          // "MyType(1,2)"   via op str()
+    io::println(f"{mt!s}")        // "MyType(1,2)"   explicit !s conversion
+    io::println(f"{mt!r}")        // repr form (debug output)
+
+    // ── Literal braces ────────────────────────────────────────────────────────
+    io::println(f"{{ and }}")     // "{ and }"
+
+    // ── Bool formatting ───────────────────────────────────────────────────────
+    io::println(f"{true}")        // "true"
+    io::println(f"{false}")       // "false"
+
+    // ── Nested f-string (expression in {}) ───────────────────────────────────
+    let a := 10
+    let b := 3
+    io::println(f"sum={a+b} product={a*b:.2f}")   // "sum=13 product=30.00"
+    io::println(f"max={if a>b {a} else {b}}")      // "max=10"
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 4 — OPERATORS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  ARITHMETIC:          +  -  *  /  %  **
+//  OVERFLOW-EXPLICIT:   +%  -%  *%  (wrapping)   +|  -|  *|  (saturating)
+//  ASSIGNMENT:          =  +=  -=  *=  /=  %=  **=  &=  |=  ^=  <<=  >>=
+//  COMPARISON:          ==  !=  <  >  <=  >=
+//  LOGICAL:             &&  ||  !   (also: and  or  not)
+//  BITWISE:             &  |  ^  ~  <<  >>  >>>
+//  INCREMENT:           ++  --
+//  RANGE:               0..10  (exclusive)   0..=10  (inclusive)
+//  NULL:                x ?? default         x?.method()
+//  PIPE:                x |> f
+//  ERROR PROP:          expr?
+//  SPREAD:              ...list
+//  ADDRESS:             &x
+//  DEREF:               *p
+//  TYPE CHECK:          x is SomeType         → bool
+//  TYPE ASSERT:         x as SomeType         → SomeType, panics if wrong
+//  SAFE ASSERT:         x as? SomeType        → SomeType?, null if wrong
+//
+//  PRECEDENCE (highest → lowest):
+//    ::  (level 15 — module path, tightest)
+//    postfix:  () [] . ++ --
+//    prefix:   ! ~ - * & ++ -- move
+//    **
+//    * / %
+//    + -
+//    << >> >>>         ← bitwise shift (NOT comparison operators)
+//    < > <= >= is as as?
+//    == !=
+//    &   (bitwise AND)
+//    ^   (bitwise XOR)
+//    |   (bitwise OR)
+//    &&
+//    ||
+//    ??
+//    |>
+//    ?   (error propagate, postfix)
+//    = += -= etc.
+
+fn operatorsDemo() {
+    var a := 10
+    var b := 3
+
+    let sum    := a + b
+    let diff   := a - b
+    let prod   := a * b
+    let quot   := a / b         // integer division
+    let rem    := a % b
+    let pw     := 2 ** 10       // 1024
+
+    a += 5;  a -= 2;  a *= 3
+
+    // Overflow-explicit operators
+    var x8: int8 = 100
+    let w  := x8 +% 50          // wrapping: -106
+    let s  := x8 +| 50          // saturating: 127
+
+    // Bitwise
+    let band   := a & b
+    let bor    := a | b
+    let bxor   := a ^ b
+    let bnot   := ~a
+    let lsh    := a << 2
+    let rsh    := a >> 1
+    let ursh   := a >>> 1
+
+    // Type operators
+    var obj: any = "hello"
+    let isStr  := obj is str
+    let asStr  := obj as str
+    let safeS  := obj as? str
+
+    // Range
+    let r1 := 0..10
+    let r2 := 0..=10
+    let r3 := 10..0             // reversed
+
+    // Pipe: x |> f is exactly f(x)
+    // str is a TYPE NAME here — dot is correct per RULE SYM5 and CALL4 step 2
+    let result := "  hello  " |> str.trim |> str.upper
+
+    // Spread
+    let nums := [1, 2, 3]
+    let total := sum(...nums)
+
+    let a2 := [1, 2]
+    let b2 := [3, 4]
+    let c2 := [...a2, ...b2, 5]
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 4 (Operators) in vex_spec_final.vex
+// as SECTION 4-A — NUMERIC OVERFLOW & CHECKED ARITHMETIC
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 4-A — NUMERIC OVERFLOW & CHECKED ARITHMETIC
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn numericOverflowDemo() {
+
+    // ── Default +/-/* behavior ────────────────────────────────────────────────
+    // Debug (-O0): panics on overflow
+    // Release (-O2): undefined (may wrap, may not — compiler assumes no overflow)
+    var a: int8 = 100
+    // let bad := a + 50    // panic in debug: "integer overflow" (100+50=150 > 127)
+
+    // ── Wrapping operators +% -% *% (always-defined, any build mode) ─────────
+    var x: int8 = 127
+    io::println(x +% 1)    // -128   (wraps: 127 + 1 = -128 in 8-bit signed)
+    io::println(x +% 2)    // -127
+    io::println(x *% 2)    // -2     (127 * 2 = 254 = 0xFE = -2 signed)
+
+    var u: uint8 = 255
+    io::println(u +% 1)    // 0      (wraps unsigned: 255 + 1 = 0 mod 256)
+    io::println(u +% 2)    // 1
+
+    // Wrapping subtraction
+    var y: int8 = -128
+    io::println(y -% 1)    // 127    (wraps: -128 - 1 = -129 wraps to 127)
+
+    // ── Saturating operators +| -| *| (clamps at MIN/MAX) ────────────────────
+    var s: int8 = 100
+    io::println(s +| 50)   // 127    (100+50=150 > 127 → clamped to 127)
+    io::println(s +| 100)  // 127    (clamped)
+    io::println(s *| 3)    // 127    (300 > 127 → clamped to 127)
+
+    var neg: int8 = -100
+    io::println(neg -| 50) // -128   (-100-50=-150 < -128 → clamped to -128)
+
+    var us: uint8 = 200
+    io::println(us +| 100) // 255    (200+100=300 > 255 → clamped to 255)
+    io::println(us -| 250) // 0      (200-250=-50 < 0 → clamped to 0)
+
+    // ── Checked arithmetic (returns T? — null on overflow) ────────────────────
+    let ok1  := int8.checkedAdd(100, 20)   // int8?  → int8(120) (fits)
+    let over := int8.checkedAdd(100, 50)   // int8?  → null      (150 overflows)
+    io::println(ok1   ?? -1)     // 120
+    io::println(over  ?? -1)     // -1  (null means overflow)
+
+    let divOk  := int.checkedDiv(10, 3)    // int?  → 3
+    let divZero := int.checkedDiv(10, 0)   // int?  → null (divide by zero)
+    io::println(divOk   ?? -1)   // 3
+    io::println(divZero ?? -1)   // -1
+
+    // ── Checked narrowing cast ────────────────────────────────────────────────
+    let big: int64  = 999_999_999_999
+    let narrow := int32.checked(big)       // int32? → null (doesn't fit)
+    let fits   := int32.checked(42L)       // int32? → 42
+
+    io::println(narrow ?? -1)    // -1  (null means didn't fit)
+    io::println(fits   ?? -1)    // 42
+
+    // Wrapping narrow cast (truncate to low N bits)
+    let truncated := int32.wrap(big)       // always succeeds: low 32 bits of big
+    io::println(truncated)       // some value (bitwise truncation)
+
+    let wrappedByte := uint8.wrap(-1)      // 255  (-1 as uint8 = 0xFF = 255)
+    io::println(wrappedByte)
+
+    // ── Float arithmetic (always IEEE 754 — no panic) ─────────────────────────
+    let inf  := 1.0 / 0.0          // Infinity  (no panic)
+    let ninf := -1.0 / 0.0         // -Infinity
+    let nan  := 0.0 / 0.0          // NaN
+    io::println(math::isInf(inf))  // true
+    io::println(math::isNaN(nan))  // true
+    io::println(nan == nan)         // false  (NaN != NaN per IEEE 754)
+    io::println(nan != nan)         // true
+
+    // ── Integer division truncates toward zero ────────────────────────────────
+    io::println(7  /  3)    //  2
+    io::println(-7 /  3)    // -2
+    io::println(7  / -3)    // -2
+    io::println(-7 / -3)    //  2
+    io::println(7  %  3)    //  1
+    io::println(-7 %  3)    // -1  (sign follows dividend)
+    io::println(7  % -3)    //  1
+    io::println(-7 % -3)    // -1
+
+    // ── Unsigned arithmetic always wraps (no panic in any build mode) ─────────
+    var u2: uint8 = 255
+    io::println(u2 + 1)    // 0   (unsigned always wraps — no panic, no UB)
+    var u3: uint8 = 0
+    io::println(u3 - 1)    // 255 (unsigned underflow wraps to max)
+
+    // ── Bit shift safety ──────────────────────────────────────────────────────
+    var bits: int32 = 1
+    io::println(bits << 10)   // 1024
+    io::println(bits << 31)   // -2147483648  (sign bit set — valid for int32)
+    // bits << 32             // PANIC: shift >= bit width (all build modes)
+    // bits << -1             // PANIC: negative shift (all build modes)
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 5 — CONTROL FLOW
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn controlFlowDemo() {
+    var x := 42
+
+    // ── if / elif / else ──────────────────────────────────────────────────────
+    if x > 100 {
+        io::println("big")
+    } elif x > 50 {
+        io::println("medium")
+    } else {
+        io::println("small")
+    }
+
+    // if as expression
+    let label := if x > 0 { "positive" } else { "zero or negative" }
+
+    // if-let: unwrap nullable or Result
+    var maybeVal: int? = 42
+    if let val = maybeVal {
+        io::println(f"Got value: {val}")
+    }
+
+    // ── match ─────────────────────────────────────────────────────────────────
+    match x {
+        0           => io::println("zero")
+        1..9        => io::println("1 to 8")
+        1..=9       => io::println("1 to 9")
+        10 | 20     => io::println("ten or twenty")
+        n if n < 0  => io::println(f"negative: {n}")
+        _           => io::println("other")
+    }
+
+    // match as expression
+    let desc := match x {
+        0       => "zero"
+        1..=9   => "digit"
+        10..=99 => "double digit"
+        _       => "large"
+    }
+
+    // match on type (replaces instanceof chains)
+    var val: any = 3.14
+    let info := match val {
+        as int i    => f"Integer: {i}"
+        as float f  => f"Float: {f}"
+        as str s    => f"String len: {s.len()}"
+        as bool b   => f"Bool: {b}"
+        as []int a  => f"Int list, len={a.len()}"
+        _           => "Unknown"
+    }
+
+    // match on struct destructure
+    struct Point2 { x: int, y: int }
+    let pt := Point2 { x: 3, y: 4 }
+    match pt {
+        { x: 0, y: 0 } => io::println("origin")
+        { x: 0, y }    => io::println(f"on y-axis at {y}")
+        { x, y: 0 }    => io::println(f"on x-axis at {x}")
+        { x, y }       => io::println(f"point ({x},{y})")
+    }
+
+    // while-let
+    var iter: int? = 0
+    while let n = iter {
+        io::print(f"{n} ")
+        iter = if n < 5 { n + 1 } else { null }
+    }
+
+    // ── Loops ─────────────────────────────────────────────────────────────────
+    let fruits := ["apple", "banana", "cherry"]
+
+    for fruit in fruits {
+        io::println(fruit)
+    }
+
+    for i, fruit in fruits {
+        io::println(f"{i}: {fruit}")
+    }
+
+    // Map iteration — order is unspecified (see RULE COL2)
+    let scoreMap: [str:int] = ["Alice": 95, "Bob": 87]
+    for name, score in scoreMap {
+        io::println(f"{name} = {score}")
+    }
+    // To iterate in sorted key order:
+    for name, score in scoreMap.entries().sortBy(|(k1,_), (k2,_)| -> k1.compareTo(k2)) {
+        io::println(f"{name} = {score}")
+    }
+
+    // Range loops
+    for i in 0..10         { io::print(f"{i} ") }
+    for i in 0..=10        { io::print(f"{i} ") }
+    for i in 10..0         { io::print(f"{i} ") }
+    for i in 0..10 step 2  { io::print(f"{i} ") }
+    for i in 10..0 step 2  { io::print(f"{i} ") }
+
+    // C-style for
+    for var i := 0; i < 10; i++ {
+        io::print(f"{i} ")
+    }
+
+    // while
+    var n := 0
+    while n < 10 { n += 2 }
+
+    // do-while
+    var count := 0
+    do {
+        count++
+    } while count < 5
+
+    // infinite loop
+    loop {
+        count--
+        if count <= 0 { stop }
+    }
+
+    // skip = continue, stop = break
+    for i in 0..20 {
+        if i % 2 == 0 { skip }
+        if i > 15     { stop }
+        io::print(f"{i} ")
+    }
+
+    // labeled break/continue
+    outer: for i in 0..5 {
+        inner: for j in 0..5 {
+            if j == 2 { skip outer }
+            if i == 3 { stop outer }
+            io::print(f"({i},{j}) ")
+        }
+    }
+
+    // defer: runs when current scope exits
+    {
+        let file := fs::open("data.txt", "r").expect("file not found")
+        defer file.close()
+        defer io::println("scope ending")    // defers run in REVERSE order
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 6 — FUNCTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn add(a: int, b: int) -> int {
+    a + b
+}
+
+fn square(x: int) -> int = x * x
+
+fn greet(name: str) {
+    io::println(f"Hello, {name}!")
+}
+
+fn connect(host: str, port: int = 8080, tls: bool = false) -> str {
+    f"{if tls { 'https' } else { 'http' }}://{host}:{port}"
+}
+
+fn divmod(a: int, b: int) -> (int, int) = (a / b, a % b)
+
+fn stats(data: []float64) -> (mean: float64, variance: float64) {
+    mean = data.sum() / float64(data.len())
+    let diffs := data.map(|x| -> (x - mean) ** 2.0)
+    variance = diffs.sum() / float64(diffs.len())
+}
+
+fn sum(nums: ...int) -> int {
+    var total := 0
+    for n in nums { total += n }
+    total
+}
+
+fn printPoint(p: &Point) {
+    io::println(f"({p.x}, {p.y})")
+}
+
+fn scale(p: &mut Point, factor: float64) {
+    p.x *= factor
+    p.y *= factor
+}
+
+fn applyTwice(f: fn(int) -> int, x: int) -> int = f(f(x))
+
+fn compose<A, B, C>(f: fn(B) -> C, g: fn(A) -> B) -> fn(A) -> C {
+    |x| -> f(g(x))
+}
+
+fn adder(n: int) -> fn(int) -> int {
+    |x| -> x + n
+}
+
+// factorial — runtime version (returns int64)
+fn factorial(n: int) -> int64 {
+    if n <= 1 { 1L } else { int64(n) * factorial(n - 1) }
+}
+
+// comptimeFact — comptime version (different name — no conflict)
+comptime fn comptimeFact(n: int) -> int {
+    if n <= 1 { 1 } else { n * comptimeFact(n - 1) }
+}
+
+fn maxOf<T: Ord>(a: T, b: T) -> T {
+    if a > b { a } else { b }
+}
+
+fn zip<A, B>(a: []A, b: []B) -> [](A, B) {
+    let len := math::min(a.len(), b.len())
+    var out: [](A, B) = []
+    for i in 0..len { out.append((a[i], b[i])) }
+    out
+}
+
+async fn fetchUser(id: int) -> Result<User, str> {
+    let response := await net::get(f"https://api.example.com/users/{id}")?
+    let user     := await response.json<User>()?
+    Ok(user)
+}
+
+// sequence — renamed from `range` to avoid conflict with built-in range syntax
+// Use built-in 0..N for simple ranges; use sequence() for step/lazy iteration
+fn* sequence(start: int, end: int, step: int = 1) -> int {
+    var i := start
+    while i < end {
+        yield i
+        i += step
+    }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after fn* sequence() in SECTION 6 (Functions)
+// as SECTION 6-A — GENERATORS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 6-A — GENERATORS (fn* / yield)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// ── Basic generator ───────────────────────────────────────────────────────────
+
+fn* range(start: int, end: int, step: int = 1) -> int {
+    var i := start
+    while i < end {
+        yield i
+        i += step
+    }
+    // body ends → generator exhausted → next() returns null
+}
+
+// ── Infinite generator (safe — lazy, never materializes) ─────────────────────
+
+fn* naturals() -> int {
+    var i := 0
+    loop { yield i; i++ }
+}
+
+fn* fibonacci() -> int64 {
+    var a, b := 0L, 1L
+    loop {
+        yield a
+        a, b = b, a + b
+    }
+}
+
+// ── Generator with yield* delegation ─────────────────────────────────────────
+
+fn* concat<T>(a: Generator<T>, b: Generator<T>) -> T {
+    yield* a      // yields all values from a, then continues
+    yield* b      // yields all values from b
+}
+
+// ── Parameterized generator ───────────────────────────────────────────────────
+
+fn* repeat<T>(item: T, times: int) -> T {
+    for _ in 0..times { yield item }
+}
+
+fn* cycle<T>(items: []T) -> T {
+    if items.len() == 0 { return }
+    loop {
+        for item in items { yield item }
+    }
+}
+
+// ── Generator capturing outer state ──────────────────────────────────────────
+
+fn makeCounter(start: int, step: int) -> Generator<int> {
+    // copy capture: start and step copied into generator state at creation
+    return copy fn*() -> int {
+        var n := start
+        loop { yield n; n += step }
+    }()
+}
+
+fn generatorDemo() {
+    // ── Basic iteration ───────────────────────────────────────────────────────
+    for n in range(0, 10, 2) {
+        io::print(f"{n} ")        // 0 2 4 6 8
+    }
+    io::println("")
+
+    // ── .collect() materializes into []T ─────────────────────────────────────
+    let evens := range(0, 20, 2).collect()   // [0,2,4,...,18]
+    io::println(evens)
+
+    // ── .take(n) safely limits infinite generators ────────────────────────────
+    let firstFibs := fibonacci().take(10).collect()
+    io::println(firstFibs)       // [0,1,1,2,3,5,8,13,21,34]
+
+    let first5 := naturals().take(5).collect()
+    io::println(first5)          // [0,1,2,3,4]
+
+    // ── Chaining Generator methods ────────────────────────────────────────────
+    let result := naturals()
+        .filter(|n| -> n % 2 == 0)      // even numbers
+        .map(|n| -> n * n)              // square them
+        .take(5)                         // first 5
+        .collect()                       // materialize
+    io::println(result)          // [0,4,16,36,64]
+
+    // ── .next() manual iteration ──────────────────────────────────────────────
+    let gen := range(1, 4)
+    io::println(gen.next() ?? -1)    // 1
+    io::println(gen.next() ?? -1)    // 2
+    io::println(gen.next() ?? -1)    // 3
+    io::println(gen.next() ?? -1)    // null → -1 (exhausted)
+
+    // ── yield* delegation ─────────────────────────────────────────────────────
+    let combined := concat(range(1, 4), range(10, 13)).collect()
+    io::println(combined)        // [1,2,3,10,11,12]
+
+    // ── Generator as function argument ────────────────────────────────────────
+    fn sumGen(g: Generator<int>) -> int {
+        var total := 0
+        for v in g { total += v }
+        total
+    }
+    io::println(sumGen(range(1, 6)))    // 15 (1+2+3+4+5)
+
+    // ── Infinite cycle ────────────────────────────────────────────────────────
+    let colours := cycle(["red", "green", "blue"]).take(7).collect()
+    io::println(colours)         // ["red","green","blue","red","green","blue","red"]
+
+    // ── Counter closure-style generator ──────────────────────────────────────
+    let counter := makeCounter(10, 5)
+    io::println(counter.take(4).collect())   // [10,15,20,25]
+
+    // ── async generator (for async iteration) ────────────────────────────────
+    async fn* streamInts(n: int) -> int {
+        for i in 0..n {
+            await async::sleep(1ms)    // simulate async I/O between yields
+            yield i
+        }
+    }
+
+    async fn consumeStream() {
+        for await v in streamInts(5) {
+            io::println(f"streamed: {v}")
+        }
+    }
+    async::run(consumeStream())
+}
+
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 7 — LAMBDAS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  SYNTAX:
+//    |params| -> expr              single-expression body
+//    |params| -> { block }         multi-line block body
+//    || -> expr                    no parameters
+//    |x: int| -> x * 2            explicit parameter type
+//
+//  CAPTURE:
+//    Default:          outer variables captured BY BORROW
+//    copy |p| -> body  capture all used outer vars BY COPY at creation
+//    move |p| -> body  MOVE ownership of all used outer vars into lambda
+//
+//  METHOD REFERENCES (RULE L10):
+//    str.upper   = |s: str| -> s.upper()      (instance method ref on type name)
+//    Point.origin = || -> Point.origin()      (static method ref on type name)
+//    io::println  = |x: any| -> io::println(x) (module fn ref — :: is correct)
+//    The dot in `str.upper` is correct because `str` is a TYPE NAME (RULE SYM5).
+
+fn lambdaDemo() {
+    let double   := |x: int| -> x * 2
+    let addLambda := |a: int, b: int| -> a + b
+    let noArgs   := || -> io::println("called!")
+    let inferred := |x, y| -> x + y
+
+    // Multi-line lambda
+    let process := |x: int| -> {
+        let step1 := x * 2
+        let step2 := step1 + 10
+        step2
+    }
+
+    // Immediately invoked
+    let result := (|a: int, b: int| -> a * b)(6, 7)
+
+    // ── Closures ──────────────────────────────────────────────────────────────
+    var base := 100
+
+    let addBase  := |x: int| -> x + base           // borrow — sees live base
+    base = 200
+    io::println(f"{addBase(5)}")                    // 205
+
+    let snapshot := copy |x: int| -> x + base      // copy — captured 200
+    base = 999
+    io::println(f"{snapshot(5)}")                   // 205
+
+    // move capture — transfers ownership
+    var ownedStr: ^str = mem::new("data")
+    let consumer := move || -> {
+        io::println(*ownedStr)
+    }
+    // ownedStr is invalid here (moved into lambda)
+
+    // ── Higher-order functions ────────────────────────────────────────────────
+    let nums := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+    let evens   := nums.filter(|n| -> n % 2 == 0)
+    let squares := nums.map(|n| -> n * n)
+    let total   := nums.reduce(0, |acc, n| -> acc + n)
+    let big     := nums.find(|n| -> n > 7)
+    let any6    := nums.any(|n| -> n == 6)
+    let allPos  := nums.all(|n| -> n > 0)
+    let sorted  := nums.sortBy(|a, b| -> a - b)
+    let grouped := nums.groupBy(|n| -> n % 2 == 0)
+
+    // Chaining
+    let result2 := nums
+        .filter(|n| -> n % 2 == 0)
+        .map(|n| -> n * n)
+        .filter(|n| -> n > 10)
+        .reduce(0, |acc, n| -> acc + n)
+
+    // Storing lambdas
+    var transform: fn(int) -> int = |x| -> x * x
+    transform = double
+    transform = |x| -> x + 1
+
+    let ops: []fn(int, int) -> int = [
+        |a, b| -> a + b,
+        |a, b| -> a - b,
+        |a, b| -> a * b,
+        |a, b| -> if b != 0 { a / b } else { 0 },
+    ]
+    for op in ops { io::print(f"{op(10, 3)} ") }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 8 — STRUCTS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  struct = value type. Assignment is MOVE for non-Copy structs (see OWN1–OWN4).
+//  A struct is Copy only if ALL fields are Copy types (no ^T, ~T, []T, str, etc.)
+//
+//  FIELD DEFAULTS:
+//    Fields with defaults may be omitted in struct literals (see SI1).
+//    Fields without defaults MUST be provided (see SI1).
+//    `var s: MyStruct` (no value) → all fields zero-initialized (see SI2).
+//
+//  STATIC FIELDS AND METHODS (see SF1–SF3):
+//    static fieldName: Type = value   ← declaration in struct/class body
+//    TypeName.fieldName               ← access (dot on type name)
+//    TypeName.fieldName = value       ← write
+//    NEVER TypeName::fieldName        ← :: is for modules only
+
+struct Point {
+    x: float64
+    y: float64
+
+    // Short init — field names match param names → auto-assigns self.x=x, self.y=y
+    init(x, y)
+
+    // Extra init overload
+    init(xy: float64) { self.x = xy; self.y = xy }
+
+    fn distanceTo(other: Point) -> float64 {
+        let dx := self.x - other.x
+        let dy := self.y - other.y
+        math::sqrt(dx*dx + dy*dy)
+    }
+
+    fn translate(dx: float64, dy: float64) -> Point {
+        Point { x: self.x + dx, y: self.y + dy }
+    }
+
+    fn scale(factor: float64) {
+        self.x *= factor
+        self.y *= factor
+    }
+
+    // Static methods — called as Point.fromAngle(...)  NOT Point::fromAngle(...)
+    static fn fromAngle(angle: float64, radius: float64) -> Point {
+        Point { x: radius * math::cos(angle), y: radius * math::sin(angle) }
+    }
+
+    static fn origin() -> Point = Point { x: 0.0, y: 0.0 }
+
+    // Static field — accessed as Point.instanceCount  NOT Point::instanceCount
+    pub static instanceCount: int = 0
+
+    // Operator overloading
+    op +(other: Point)  -> Point = Point { x: self.x + other.x, y: self.y + other.y }
+    op -(other: Point)  -> Point = Point { x: self.x - other.x, y: self.y - other.y }
+    op *(s: float64)    -> Point = Point { x: self.x * s,       y: self.y * s       }
+    op ==(other: Point) -> bool  = self.x == other.x && self.y == other.y
+    op [](i: int)       -> float64 = if i == 0 { self.x } else { self.y }
+    op str()            -> str   = f"({self.x}, {self.y})"
+
+    // Properties
+    prop magnitude: float64 {
+        get => math::sqrt(self.x*self.x + self.y*self.y)
+    }
+
+    prop angle: float64 {
+        get => math::atan2(self.y, self.x)
+    }
+
+    // Property with per-accessor visibility — readable anywhere, write is pub here
+    pub prop label: str {
+        get => f"point({self.x},{self.y})"
+        priv set(v) => { }     // setter more restricted than overall visibility
+    }
+}
+
+// Struct update syntax:
+//   var p4 := Point { ...p1, x: 10.0 }   ← copies all from p1, overrides x
+
+// Struct destructuring:
+//   let { x, y } := p1
+//   let { x: px, y: py } := p1
+//   let { x, .. } := p1                  ← ignore remaining fields
+
+// Partial struct literal with `..` zero-fill:
+//   struct Config { host: str = "localhost", port: int = 8080, debug: bool = false }
+//   var cfg := Config { host: "prod.example.com", .. }
+//   cfg.port  → 8080    (default value)
+//   cfg.debug → false   (default value)
+
+// Adding methods in a separate impl block (same module)
+impl Point {
+    fn isPolar() -> bool = self.x >= 0.0 && self.y >= 0.0
+}
+
+// impl on built-in types
+impl str {
+    fn isPalindrome() -> bool = self == self.reversed()
+    fn wordCount() -> int = self.split(" ").len()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 9 — USER STRUCT: User (used throughout demos)
+// ──────────────────────────────────────────────────────────────────────────────
+
+struct User {
+    name:  str
+    age:   int
+    email: str = ""
+
+    init(name, age)
+    init(name: str, age: int, email: str) {
+        self.name  = name
+        self.age   = age
+        self.email = email
+    }
+
+    fn greet() -> str = f"Hi, I'm {self.name}, age {self.age}"
+    fn getName() -> str = self.name
+
+    static fn maxAge() -> int = 150
+    pub static count: int = 0
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 10 — CLASSES
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  class = reference type, always heap-allocated.
+//  Fields: priv by default.
+//  Methods: pub by default.
+//  Static fields and methods: accessed as TypeName.field  NOT TypeName::field
+//
+//  OBJECT CREATION — call the type name like a function:
+//    let a := Animal("Rex", "Dog", 3)      ← creates object, calls init()
+//  NO `new` keyword. NO `::`. Just the name.
+
+class Animal {
+    priv name:    str
+    priv species: str
+    pub  age:     int
+
+    // Static field — shared across all instances
+    // Accessed as Animal.count  NOT Animal::count
+    pub static count: int = 0
+
+    init(name: str, species: str, age: int = 0) {
+        self.name    = name
+        self.species = species
+        self.age     = age
+        Animal.count++    // access static field via type name, not self
+    }
+
+    pub fn speak() -> str = f"{self.name} makes a sound"
+    pub fn getName() -> str = self.name
+
+    pub final fn identity() -> str = f"{self.name} the {self.species}"
+
+    // Property with visibility on getter/setter
+    pub prop fullName: str {
+        get => f"{self.name} ({self.species})"
+        set(v) => {
+            let parts := v.split(" ")
+            self.name = parts[0]
+        }
+    }
+
+    // prot is valid on class properties (RULE VIS6)
+    prot prop internalId: str {
+        get => f"{self.species}_{self.name}"
+    }
+
+    deinit {
+        Animal.count--
+        io::println(f"{self.name} freed")
+    }
+}
+
+class Dog : Animal {
+    priv breed: str
+
+    init(name: str, breed: str) {
+        super(name, "Dog")
+        self.breed = breed
+    }
+
+    @override
+    pub fn speak() -> str = f"{self.getName()} barks!"
+
+    pub fn fetch() -> str = f"{self.breed} fetches!"
+}
+
+class GuideDog : Dog {
+    priv owner: str
+
+    init(name: str, breed: str, owner: str) {
+        super(name, breed)
+        self.owner = owner
+    }
+
+    @override
+    pub fn speak() -> str = f"{self.getName()} guides quietly"
+}
+
+sealed class Shape { }
+
+abstract class Vehicle {
+    pub speed: float64 = 0.0
+    pub abstract fn maxSpeed() -> float64
+    pub fn accelerate(delta: float64) {
+        self.speed = math::min(self.speed + delta, self.maxSpeed())
+    }
+}
+
+class Car : Vehicle {
+    @override pub fn maxSpeed() -> float64 = 200.0
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 11 — INTERFACES & TRAITS
+// ──────────────────────────────────────────────────────────────────────────────
+
+interface Drawable {
+    fn draw() -> void
+    fn area() -> float64
+    fn perimeter() -> float64
+}
+
+interface Serializable {
+    fn toJson() -> str
+    fn toBinary() -> []byte
+}
+
+trait Printable {
+    fn toString() -> str
+
+    fn print()   = io::print(self.toString())
+    fn println() = io::println(self.toString())
+    fn debug()   = io::println(f"[DEBUG] {self.toString()}")
+}
+
+trait Comparable<T> {
+    fn compareTo(other: T) -> int
+
+    fn lt(other: T) -> bool  = self.compareTo(other) < 0
+    fn gt(other: T) -> bool  = self.compareTo(other) > 0
+    fn eq(other: T) -> bool  = self.compareTo(other) == 0
+    fn lte(other: T) -> bool = self.compareTo(other) <= 0
+    fn gte(other: T) -> bool = self.compareTo(other) >= 0
+}
+
+trait Iterator<T> {
+    fn next() -> T?
+    fn hasNext() -> bool = self.next() != null
+}
+
+trait Iterable<T> {
+    fn iter() -> Iterator<T>
+}
+
+trait Clone {
+    fn clone() -> Self
+}
+
+trait Hash {
+    fn hash() -> uint64
+}
+
+class Circle : Drawable, Printable, Comparable<Circle>, Serializable {
+    pub radius: float64
+
+    init(r: float64) { self.radius = r }
+
+    fn draw()       { io::println(f"○ r={self.radius}") }
+    fn area()       -> float64 = math::PI * self.radius ** 2.0
+    fn perimeter()  -> float64 = 2.0 * math::PI * self.radius
+
+    fn toString()   -> str = f"Circle(r={self.radius})"
+
+    fn compareTo(other: Circle) -> int {
+        if self.radius < other.radius { -1 }
+        elif self.radius > other.radius { 1 }
+        else { 0 }
+    }
+
+    fn toJson()     -> str = f"{{\"type\":\"circle\",\"radius\":{self.radius}}}"
+    fn toBinary()   -> []byte = mem::asBytes(self.radius)
+}
+
+fn drawAll(shapes: []Drawable) {
+    for shape in shapes {
+        shape.draw()
+        io::println(f"  area={shape.area():.2f}")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 12 — GENERICS
+// ──────────────────────────────────────────────────────────────────────────────
+
+struct Box<T> {
+    priv value: T
+
+    init(value: T) { self.value = value }
+
+    fn get()  -> T = self.value
+    fn set(v: T) { self.value = v }
+
+    fn map<R>(f: fn(T) -> R) -> Box<R> = Box<R>(f(self.value))
+    fn flatMap<R>(f: fn(T) -> Box<R>) -> Box<R> = f(self.value)
+
+    op str() -> str = f"Box({self.value})"
+}
+
+struct SortedVec<T: Ord + Clone> {
+    priv items: []T
+
+    init() { self.items = [] }
+
+    fn push(item: T) {
+        self.items.append(item.clone())
+        self.items.sortBy(|a, b| -> a.compareTo(b))
+    }
+
+    fn min() -> T? = if self.items.len() > 0 { self.items[0] } else { null }
+    fn max() -> T? = if self.items.len() > 0 { self.items[self.items.len()-1] } else { null }
+    fn contains(item: T) -> bool = self.items.any(|x| -> x == item)
+}
+
+fn identity<T>(x: T) -> T = x
+fn first<T>(list: []T) -> T? = if list.len() > 0 { list[0] } else { null }
+fn last<T>(list: []T)  -> T? = if list.len() > 0 { list[list.len()-1] } else { null }
+fn repeat<T>(item: T, n: int) -> []T {
+    var out: []T = []
+    for _ in 0..n { out.append(item) }
+    out
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PASTE AFTER: SECTION 12 — GENERICS
+// NEW SECTION: 12-A — STATIC vs DYNAMIC DISPATCH
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 12-A — STATIC vs DYNAMIC DISPATCH
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  STATIC DISPATCH (generics — monomorphization):
+//    The compiler generates a SEPARATE compiled copy of the function for each
+//    concrete type used. Zero runtime overhead. No boxing. No vtable.
+//    Binary gets one copy per unique type instantiation.
+//
+//  DYNAMIC DISPATCH (interface / trait types):
+//    The compiler generates ONE compiled function. The concrete type is
+//    represented as a FAT POINTER at runtime: { data_ptr, vtable_ptr }.
+//    The vtable holds function pointers for each method in the interface.
+//    Cost: one extra indirection per method call.
+//    Benefit: heterogeneous collections, one compiled function for all types.
+//
+//  CHOOSE:
+//    Static  → performance-critical, homogeneous use, known types at call site.
+//    Dynamic → heterogeneous collections, plugin/callback systems, smaller binary.
+
+// Static dispatch — one compiled copy per T used
+fn clampStatic<T: Ord>(value: T, lo: T, hi: T) -> T {
+    if value < lo { lo }
+    elif value > hi { hi }
+    else { value }
+}
+
+// Dynamic dispatch — single compiled function, vtable call
+fn describeDrawable(shape: Drawable) -> str {
+    f"area={shape.area():.2f} perimeter={shape.perimeter():.2f}"
+}
+
+fn dispatchDemo() {
+    // Static — monomorphized: one copy for int, one copy for float
+    io::println(clampStatic(15, 0, 10))           // int copy  → 10
+    io::println(clampStatic(3.0, 0.0, 5.0))       // float copy → 3.0
+
+    // Dynamic — single compiled describeDrawable, vtable used
+    let c := Circle(4.0)
+    io::println(describeDrawable(c))
+
+    // Heterogeneous collection requires dynamic dispatch
+    var shapes: []Drawable = [Circle(1.0), Circle(2.0), Circle(3.0)]
+    for s in shapes {
+        s.draw()                                   // vtable call each iteration
+    }
+
+    // Homogeneous — use generics for zero overhead
+    var circles: []Circle = [Circle(1.0), Circle(2.0), Circle(3.0)]
+    for c2 in circles {
+        io::println(c2.area())                     // direct call, no vtable
+    }
+
+    // Explicit type annotation forces static dispatch even on interface-implementing type
+    fn sumAreas<T: Drawable>(shapes: []T) -> float64 {
+        var total := 0.0
+        for s in shapes { total += s.area() }     // direct call — T is monomorphized
+        total
+    }
+    io::println(sumAreas(circles))                 // static, no boxing
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 13 — ENUMS (algebraic data types)
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  VARIANT ACCESS — ALWAYS use . on the enum TYPE NAME:
+//    Color.Red                    ← correct
+//    Color.Custom(255, 0, 128)    ← correct with data
+//    Color::Red                   ← WRONG — :: is modules only
+//
+//  Inside match — bare variant name allowed (type is known from match subject):
+//    match color { Red => ... Green => ... Custom(r,g,b) => ... }
+
+enum Direction { North, South, East, West }
+
+enum Color {
+    Red
+    Green
+    Blue
+    Custom(r: uint8, g: uint8, b: uint8)
+
+    fn toHex() -> str {
+        match self {
+            Red           => "#FF0000"
+            Green         => "#00FF00"
+            Blue          => "#0000FF"
+            Custom(r,g,b) => f"#{r:02X}{g:02X}{b:02X}"
+        }
+    }
+
+    fn isCustom() -> bool = match self { Custom(..) => true, _ => false }
+}
+
+enum Expr {
+    Num(value: float64)
+    Add(left: ^Expr, right: ^Expr)      // ^Expr because recursive enum must be boxed
+    Mul(left: ^Expr, right: ^Expr)
+    Neg(expr: ^Expr)
+    Var(name: str)
+
+    fn eval(env: [str:float64]) -> float64 {
+        match self {
+            Num(v)        => v
+            Add(l, r)     => l.eval(env) + r.eval(env)
+            Mul(l, r)     => l.eval(env) * r.eval(env)
+            Neg(e)        => -e.eval(env)
+            Var(n)        => env[n] ?? 0.0
+        }
+    }
+
+    fn toString() -> str {
+        match self {
+            Num(v)        => str(v)
+            Add(l, r)     => f"({l} + {r})"
+            Mul(l, r)     => f"({l} * {r})"
+            Neg(e)        => f"(-{e})"
+            Var(n)        => n
+        }
+    }
+}
+
+enum Result<T, E> {
+    Ok(value: T)
+    Err(error: E)
+
+    fn isOk()           -> bool           = match self { Ok(_) => true,  _ => false }
+    fn isErr()          -> bool           = match self { Err(_) => true, _ => false }
+    fn unwrap()         -> T              = match self { Ok(v)  => v, Err(e) => panic(f"Unwrap on Err: {e}") }
+    fn unwrapErr()      -> E              = match self { Err(e) => e, Ok(_)  => panic("UnwrapErr on Ok") }
+    fn orElse(default: T) -> T            = match self { Ok(v) => v, _ => default }
+    fn map<R>(f: fn(T) -> R) -> Result<R, E> = match self { Ok(v)  => Ok(f(v)),  Err(e) => Err(e) }
+    fn mapErr<F>(f: fn(E) -> F) -> Result<T, F> = match self { Ok(v) => Ok(v),   Err(e) => Err(f(e)) }
+    fn andThen<R>(f: fn(T) -> Result<R, E>) -> Result<R, E> = match self { Ok(v) => f(v), Err(e) => Err(e) }
+}
+
+// const enum for C interop / bit flags
+const enum FileFlags: uint32 {
+    Read      = 0x01
+    Write     = 0x02
+    Exec      = 0x04
+    ReadWrite = Read | Write
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 14 — DISTINCT TYPES
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  `distinct type` creates a new type that is NOT implicitly convertible to/from
+//  its base type or any other distinct type with the same base (see DT1–DT5).
+//
+//  CONSTRUCTING:    TypeName(baseValue)   e.g. OrderId(42)
+//  EXTRACTING:      .rawValue property    e.g. oid.rawValue → int64
+//  ARITHMETIC:      NOT available by default — use .rawValue and re-wrap, or
+//                   implement op overloads explicitly
+//  EQUALITY:        == and != are auto-generated (compares rawValue)
+//  PATTERN MATCH:   match oid { OrderId(n) => ... }  binds inner int64
+
+distinct type OrderId = int64
+distinct type UserId  = int64
+
+fn distinctTypeDemo() {
+    let oid := OrderId(42)
+    let uid := UserId(42)
+
+    // oid == uid    ← COMPILE ERROR: OrderId vs UserId, different distinct types
+    // oid + oid     ← COMPILE ERROR: arithmetic not auto-generated
+
+    let rawOrder: int64 = oid.rawValue    // extract underlying value
+    let rawUser:  int64 = int64(uid)      // cast form (identical to .rawValue)
+
+    let oid2 := OrderId(rawOrder + 1)     // operate on raw, re-wrap
+
+    // Equality works
+    let same := oid == OrderId(42)        // true
+
+    // Pattern match — binds inner value
+    match oid {
+        OrderId(n) => io::println(f"order number {n}")
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 15 — ERROR HANDLING
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  THREE MECHANISMS:
+//    Result<T, E>  — expected, recoverable errors (file missing, parse fail)
+//    panic()       — programmer bugs (invariant violations, impossible states)
+//    try/catch     — catching panics at process boundary only
+//
+//  ? OPERATOR:
+//    On Result<T, E>: if Err(e) → return Err(e) from current fn
+//    On T?:           if null   → return null from current fn
+//    Enclosing fn must have compatible return type
+
+enum AppError {
+    NotFound(resource: str)
+    NetworkFail(code: int, msg: str)
+    ParseError(input: str, reason: str)
+    IoError(path: str, msg: str)
+
+    fn toString() -> str {
+        match self {
+            NotFound(r)        => f"Not found: {r}"
+            NetworkFail(c, m)  => f"Network error {c}: {m}"
+            ParseError(i, r)   => f"Parse error on '{i}': {r}"
+            IoError(p, m)      => f"IO error on '{p}': {m}"
+        }
+    }
+}
+
+fn parseInt(s: str) -> Result<int, AppError> {
+    let n := int?(s)
+    match n {
+        null  => Err(AppError.ParseError(s, "not a valid integer"))
+        let v => Ok(v)
+    }
+}
+
+fn readConfig(path: str) -> Result<str, AppError> {
+    match fs::readFile(path) {
+        Ok(content) => Ok(content)
+        Err(e)      => Err(AppError.IoError(path, e))
+    }
+}
+
+fn loadAndParse(path: str) -> Result<int, AppError> {
+    let content := readConfig(path)?
+    let trimmed := content.trim()
+    let value   := parseInt(trimmed)?
+    Ok(value * 2)
+}
+
+fn errorDemo() {
+    match loadAndParse("config.txt") {
+        Ok(v)  => io::println(f"Value: {v}")
+        Err(e) => io::println(f"Failed: {e}")
+    }
+
+    if let Ok(v) = parseInt("42") {
+        io::println(f"Parsed: {v}")
+    }
+
+    let val := parseInt("abc").orElse(0)
+
+    let doubled := parseInt("5").map(|n| -> n * 2)
+
+    let result := parseInt("10").andThen(|n| -> {
+        if n > 5 { Ok(n) } else { Err(AppError.ParseError("10", "too small")) }
+    })
+
+    let safe := try {
+        let x := riskyCalc()
+        x * 2
+    } catch e {
+        io::println(f"Panic caught: {e.message}")
+        io::println(f"Stack: {e.stackTrace}")
+        -1
+    }
+
+    let x := 42
+    assert(x > 0, f"Expected positive, got {x}")
+    assertEq(x, 42, "x should be 42")
+}
+
+fn riskyCalc() -> int = panic("not implemented") as int
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PASTE AFTER: SECTION 15 — ERROR HANDLING
+// NEW SECTION: 15-A — ERROR TYPE CONVERSION (From trait + cross-type propagation)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 15-A — ERROR TYPE CONVERSION (From trait)
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  When ? is used and the Err type of the called fn differs from the return
+//  type of the calling fn, the compiler automatically calls .into() to convert.
+//  This requires: impl From<SourceError> for TargetError in scope.
+//
+//  From<E> trait:
+//    trait From<E> {
+//        fn from(err: E) -> Self
+//    }
+//  .into() is automatically derived when From is implemented.
+//  The compiler inserts the .into() call at every ? site where types differ.
+
+enum IoError {
+    FileNotFound(path: str)
+    PermissionDenied(path: str)
+    ReadFailed(path: str, reason: str)
+
+    fn toString() -> str {
+        match self {
+            FileNotFound(p)     => f"file not found: {p}"
+            PermissionDenied(p) => f"permission denied: {p}"
+            ReadFailed(p, r)    => f"read failed on '{p}': {r}"
+        }
+    }
+}
+
+enum ParseError {
+    InvalidInt(input: str)
+    InvalidFloat(input: str)
+    EmptyInput
+
+    fn toString() -> str {
+        match self {
+            InvalidInt(s)   => f"not a valid int: '{s}'"
+            InvalidFloat(s) => f"not a valid float: '{s}'"
+            EmptyInput      => "input was empty"
+        }
+    }
+}
+
+// Unified application error — wraps both
+enum AppError2 {
+    Io(inner: IoError)
+    Parse(inner: ParseError)
+    Logic(msg: str)
+
+    fn toString() -> str {
+        match self {
+            Io(e)      => f"IO: {e}"
+            Parse(e)   => f"Parse: {e}"
+            Logic(m)   => f"Logic: {m}"
+        }
+    }
+}
+
+// Implement From<IoError> for AppError2 — enables ? at IoError → AppError2 boundary
+impl AppError2 {
+    static fn from(e: IoError) -> AppError2 = AppError2.Io(e)
+}
+
+// Implement From<ParseError> for AppError2 — enables ? at ParseError → AppError2 boundary
+impl AppError2 {
+    static fn from(e: ParseError) -> AppError2 = AppError2.Parse(e)
+}
+
+// These two fns return different error types
+fn readFile2(path: str) -> Result<str, IoError> {
+    if path == "" { return Err(IoError.FileNotFound(path)) }
+    Ok("42")
+}
+
+fn parseValue(s: str) -> Result<int, ParseError> {
+    if s.trim() == "" { return Err(ParseError.EmptyInput) }
+    match int?(s.trim()) {
+        null  => Err(ParseError.InvalidInt(s))
+        let n => Ok(n)
+    }
+}
+
+// ? converts IoError → AppError2 and ParseError → AppError2 automatically
+fn loadValue(path: str) -> Result<int, AppError2> {
+    let raw    := readFile2(path)?       // IoError   automatically .into() AppError2
+    let value  := parseValue(raw)?       // ParseError automatically .into() AppError2
+    if value < 0 { return Err(AppError2.Logic("value must be non-negative")) }
+    Ok(value)
+}
+
+fn errorConversionDemo() {
+    match loadValue("config.txt") {
+        Ok(v)  => io::println(f"loaded value: {v}")
+        Err(e) => io::println(f"failed: {e}")
+    }
+
+    // Chaining with andThen — stays in same error type
+    let doubled := loadValue("a.txt")
+        .andThen(|n| -> if n < 1000 { Ok(n * 2) } else { Err(AppError2.Logic("too big")) })
+        .orElse(0)
+    io::println(f"doubled: {doubled}")
+
+    // mapErr — transform the error type explicitly
+    let asStr := readFile2("x.txt")
+        .mapErr(|e| -> e.toString())    // Result<str, IoError> → Result<str, str>
+    io::println(f"asStr err: {asStr}")
+
+    // Collect multiple Results — fail on first Err
+    let paths := ["a.txt", "b.txt", "c.txt"]
+    let results: Result<[]int, AppError2> = paths
+        .map(|p| -> loadValue(p))
+        .collect()                       // []Result<int,E> → Result<[]int,E>
+    io::println(f"all succeeded: {results.isOk()}")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 16 — STRING OPERATIONS (UTF-8 aware — see STR1–STR8)
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn stringDemo() {
+    let s := "café au lait"
+
+    // Byte count vs char count (differ for non-ASCII)
+    io::println(f"bytes:  {s.len()}")           // byte count (STR1)
+    io::println(f"chars:  {s.charCount()}")     // Unicode codepoint count (STR1)
+
+    // Byte indexing — returns byte (uint8) (STR2)
+    let firstByte: byte = s[0]                  // 'c' as uint8 = 99
+
+    // Char indexing — returns char (codepoint) — O(n) (STR3)
+    let thirdChar: char = s.charAt(2)           // 'f'
+    let accentChar: char = s.charAt(3)          // 'é' (multi-byte in UTF-8)
+
+    // Byte slicing — a and b are BYTE offsets (STR4)
+    // Slicing inside a multi-byte codepoint → RUNTIME PANIC
+    let prefix := s[0..4]                       // "café" (bytes 0-3)
+    // let bad := s[0..3]                       // PANIC: splits 'é' codepoint
+
+    // To slice by character position use charSlice (STR4)
+    let charPrefix := s.charSlice(0, 4)         // "café" (chars 0-3)
+
+    // Iteration — default iterates BYTES (STR5)
+    for b in s {
+        // b: byte
+    }
+
+    // Iterate codepoints (STR5)
+    for c in s.chars() {
+        // c: char — correct for Unicode text
+    }
+
+    // Indexed codepoint iteration
+    for i, c in s.chars().enumerate() {
+        io::print(f"{i}:{c} ")
+    }
+
+    // String comparison — ordinal codepoint comparison (STR7)
+    let eq := "abc" == "abc"
+    let lt := "abc" < "abd"
+
+    // Locale-aware comparison (STR7)
+    let order := text::collate("café", "cafe")
+
+    // From []byte — validates UTF-8 (STR6)
+    let bytes: []byte = [104, 101, 108, 108, 111]
+    let fromBytes := str(bytes)?                // Result<str, StrError>
+    let unsafe_from := str.unsafe(bytes)        // no check, unsafe required
+
+    // String builder (STR8)
+    var sb := str::Builder()
+    sb.append("Hello")
+    sb.append(", ")
+    sb.append("World")
+    let built := sb.toString()
+
+    // Common string operations
+    s.trim(); s.trimStart(); s.trimEnd()
+    s.upper(); s.lower()
+    s.contains("café")
+    s.startsWith("café")
+    s.endsWith("lait")
+    s.indexOf("au")                             // int? (byte offset)
+    s.replace("café", "tea")
+    s.split(" ")                                // []str
+    s.chars()                                   // []char
+    s.bytes()                                   // []byte
+    s.repeat(2)
+    s.reversed()
+    ", ".join(["a", "b", "c"])
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 17 — COLLECTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn collectionsDemo() {
+
+    // ── Fixed array [N]T ──────────────────────────────────────────────────────
+    var fixed: [5]int = [1, 2, 3, 4, 5]
+    var zero:  [10]float64                      // zero-initialized (all 0.0)
+    var matrix: [3][4]int                       // 2D array
+    fixed[0] = 99
+    let length := fixed.len()
+    let slice  := fixed[1..3]
+
+    // ── Dynamic list []T ──────────────────────────────────────────────────────
+    // Iteration order: INSERTION ORDER (guaranteed — see COL1)
+    var list: []int = [1, 2, 3]
+    list.append(4)
+    list.prepend(0)
+    list.insert(2, 99)
+    list.remove(99)
+    list.removeAt(0)
+    list.pop()
+    list.clear()
+    let sub  := list[1..3]
+    let copy := list.clone()
+    let len  := list.len()
+    list.reserve(100)
+
+    // Spread merge
+    let a2 := [1, 2, 3]
+    let b2 := [4, 5, 6]
+    let c2 := [...a2, ...b2]
+
+    // Functional methods
+    let evens   := list.filter(|x| -> x % 2 == 0)
+    let doubled := list.map(|x| -> x * 2)
+    let sum2    := list.reduce(0, |acc, x| -> acc + x)
+    let flat    := [[1,2],[3,4]].flatMap(|x| -> x)
+    let sorted  := list.sorted()
+    let rev     := list.reversed()
+    let uniq    := list.distinct()
+    let take3   := list.take(3)
+    let skip2   := list.skip(2)
+    let zipped  := list.zip([10,20,30])
+    let found   := list.find(|x| -> x > 5)
+    let idx     := list.findIndex(|x| -> x > 5)
+    let cnt     := list.count(|x| -> x % 2 == 0)
+    let grouped := list.groupBy(|x| -> x % 3)
+    let parts   := list.partition(|x| -> x % 2 == 0)
+
+    // Chained lazy pipeline
+    let result := list
+        .filter(|n| -> n > 0)
+        .map(|n| -> n * n)
+        .take(5)
+        .reduce(0, |acc, n| -> acc + n)
+
+    // ── Map [K:V] ─────────────────────────────────────────────────────────────
+    // Iteration order: UNSPECIFIED — do not rely on it (see COL2)
+    var scores: [str:int] = ["Alice": 95, "Bob": 87, "Carol": 92]
+    scores["Dave"] = 88
+    let grade  := scores["Alice"]               // int? (null if missing)
+    let safe   := scores["Eve"] ?? 0
+    let has    := scores.has("Bob")
+    scores.remove("Bob")
+    let keys   := scores.keys()
+    let vals   := scores.values()
+    let pairs  := scores.entries()
+    scores.forEach(|k, v| -> io::println(f"{k}: {v}"))
+
+    // Sorted iteration — explicit sort (COL2)
+    for k, v in scores.entries().sortBy(|(k1,_), (k2,_)| -> k1.compareTo(k2)) {
+        io::println(f"{k}: {v}")
+    }
+
+    let merged   := scores.mergeWith(["Eve": 77], |old, new| -> new)
+    let filtered := scores.filterValues(|v| -> v >= 90)
+    let mapped   := scores.mapValues(|v| -> v / 10)
+
+    // OrderedMap — iteration is INSERTION ORDER (COL3), from std::collections
+    var ordered: collections::OrderedMap<str, int> = collections::OrderedMap(["b": 2, "a": 1, "c": 3])
+    for k, v in ordered { io::println(f"{k}: {v}") }    // b, a, c (insertion order)
+
+    // ── Set {}T ───────────────────────────────────────────────────────────────
+    // Iteration order: UNSPECIFIED (see COL4)
+    var cities: {}str = {"Mumbai", "Delhi", "Chennai"}
+    cities.add("Pune")
+    cities.remove("Delhi")
+    let hasMumbai := cities.has("Mumbai")
+    let union2    := cities | {"Kolkata", "Mumbai"}
+    let inter     := cities & {"Mumbai", "Pune"}
+    let diff      := cities - {"Chennai"}
+    let isSubset  := {"Mumbai"} <= cities
+
+    // Sorted iteration (COL4)
+    for city in cities.toList().sorted() { io::println(city) }
+
+    // SortedSet from std::collections — always iterates ascending (COL4)
+    var sortedCities: collections::SortedSet<str> = collections::SortedSet({"Mumbai", "Delhi"})
+    for city in sortedCities { io::println(city) }
+
+    // ── Tuple ─────────────────────────────────────────────────────────────────
+    let pair: (int, str)         = (42, "hello")
+    let triple: (str, int, bool) = ("Alice", 30, true)
+    let first  := pair.0
+    let second := pair.1
+    let (ta, tb) := pair
+    let (tname, tage, _) := triple
+
+    // ── Collections from std::collections ────────────────────────────────────
+    var queue: collections::Queue<int> = collections::Queue()
+    queue.push(1); queue.push(2); queue.push(3)
+    let front  := queue.peek()
+    let popped := queue.pop()
+
+    var stack: collections::Stack<str> = collections::Stack()
+    stack.push("a"); stack.push("b")
+    let top  := stack.peek()
+    let sTop := stack.pop()
+
+    var deque: collections::Deque<int> = collections::Deque()
+    deque.pushFront(1); deque.pushBack(2)
+    deque.popFront(); deque.popBack()
+
+    var pq: collections::PriorityQueue<int> = collections::PriorityQueue()
+    var pqMax: collections::PriorityQueue<int> = collections::PriorityQueue(|a, b| -> b - a)
+    pq.push(5); pq.push(1); pq.push(3)
+    let min := pq.pop()
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 18 — MEMORY MANAGEMENT
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  MOVE SEMANTICS FOR NON-COPY TYPES (see OWN1–OWN4):
+//    var b := a          ← COMPILE ERROR if a is ^T, ~T, class, or non-Copy struct
+//    var b := move a     ← OK: transfers ownership; a becomes invalid
+//    var b := a.clone()  ← OK: creates independent copy; a still valid
+//    var b: &T = &*a     ← OK: borrows; a still valid; borrow must not outlive a
+//
+//  COPY TYPES (see OWN3):
+//    int, float, bool, char, byte, and structs of only Copy fields
+//    These copy on assignment automatically — no `move` keyword needed
+
+fn memoryDemo() {
+    // Stack value (Point is Copy — all fields are float64)
+    var p := Point { x: 1.0, y: 2.0 }
+    var q := p                              // COPY (Point fields are all float64=Copy)
+    q.x = 99.0
+    io::println(f"p.x={p.x}, q.x={q.x}")   // independent: p.x=1.0, q.x=99.0
+
+    // Owned heap — assignment requires move
+    var h: ^str = mem::new("hello")
+    io::println(*h)
+    h = mem::new("world")                   // old string freed automatically
+
+    // Move semantics — explicit `move` required (OWN1)
+    var a: ^str = mem::new("data")
+    var b := move a                         // ownership transferred to b
+    // io::println(*a)                      // COMPILE ERROR: a was moved
+    io::println(*b)
+
+    // Clone — creates independent copy
+    var c: ^[]int = mem::new([1, 2, 3])
+    var d := c.clone()
+    d.append(4)
+    io::println(f"c={*c}, d={*d}")
+
+    // Shared heap — clone increments refcount (cheap)
+    var s1: ~str = mem::share("shared")
+    var s2 := s1.clone()                    // refcount = 2
+    io::println(*s1 + " " + *s2)
+
+    // Borrow reference
+    var val := 42
+    let r: &int = &val
+    io::println(*r)
+
+    fn useBorrow(x: &int) { io::println(x) }
+    useBorrow(&val)
+
+    // Mutable borrow
+    fn doubleInPlace(x: &mut int) { x *= 2 }
+    doubleInPlace(&mut val)
+    io::println(val)                        // 84
+
+    // Raw pointer (unsafe only)
+    unsafe {
+        let raw: *int = mem::alloc(sizeof(int))
+        *raw = 123
+        io::println(*raw)
+        mem::free(raw)
+    }
+
+    // Arena allocator
+    {
+        let arena := mem::Arena(4096)
+        let n1: *int   = arena.alloc<int>()
+        let n2: *float = arena.alloc<float>()
+        *n1 = 42
+        *n2 = 3.14
+        // arena.freeAll() called at scope end
+    }
+
+    // defer
+    let f := fs::open("x.txt", "r").expect("file not found")
+    defer f.close()
+
+    // use block
+    use let conn := net::connect("localhost", 8080) {
+        conn.send("hello")
+        let resp := conn.receive()
+        io::println(resp)
+    }
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 18-A — OWNERSHIP, BORROW & ARC (deep patterns)
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  COPY vs NON-COPY TYPES:
+//    Copy types (silent bitcopy on assignment):
+//      int* uint* float* bool char byte
+//      [N]T where T is Copy
+//      (A, B) tuple where both are Copy
+//      struct where ALL fields are Copy
+//    Non-Copy types (require `move` or .clone()):
+//      ^T  ~T  class instances  str  []T  [K:V]  {}T
+//      struct that contains any non-Copy field
+//
+//  DROP ORDER (deterministic):
+//    Values in a scope are dropped in REVERSE declaration order.
+//    { var a; var b; var c }  → c dropped first, then b, then a.
+//    Struct fields dropped in reverse field-declaration order after deinit runs.
+//
+//  BORROW RULES (NLL — Non-Lexical Lifetimes):
+//    A borrow ends at its LAST USE, not at the closing brace of its scope.
+//    At any point, for a given value:
+//      EITHER: any number of &T borrows simultaneously
+//      OR:     exactly one &mut T borrow
+//      NEVER:  both at the same time
+//
+//  ARC INTERNAL LAYOUT (~T):
+//    Heap block: [ strong: atomic<uint64> | weak: atomic<uint64> | value: T ]
+//    ~T::clone()   → atomic increment of strong count. No data copy.
+//    ~T drop       → atomic decrement. Free block when strong == 0 && weak == 0.
+//    ~weak<T>      → does NOT increment strong. Block kept alive until weak == 0.
+
+fn ownershipDeepDemo() {
+
+    // ── Copy type — silent assignment copy ───────────────────────────────────
+    struct Rgb { r: uint8, g: uint8, b: uint8 }   // all uint8 = Copy → Rgb is Copy
+    var c1 := Rgb { r: 255, g: 0, b: 128 }
+    var c2 := c1                                   // COPY — c1 still valid
+    c2.r = 0
+    io::println(f"c1.r={c1.r}  c2.r={c2.r}")      // c1.r=255  c2.r=0
+
+    // ── Non-Copy struct — move required ─────────────────────────────────────
+    struct Buffer { data: []byte }                 // []byte is non-Copy → Buffer non-Copy
+    var buf1 := Buffer { data: [1, 2, 3] }
+    var buf2 := move buf1                          // ownership transferred
+    // buf1.data.len()                             // COMPILE ERROR: buf1 was moved
+    io::println(buf2.data.len())                   // OK
+
+    // ── Drop order demo ──────────────────────────────────────────────────────
+    {
+        var first: ^str  = mem::new("first")      // dropped LAST (declared first)
+        var second: ^str = mem::new("second")     // dropped SECOND
+        var third: ^str  = mem::new("third")      // dropped FIRST (declared last)
+        // at scope exit: third freed, then second, then first
+    }
+
+    // ── NLL borrow ends at last use, not closing brace ───────────────────────
+    var data := [10, 20, 30]
+    let view: &[]int = &data
+    io::println(view.len())                        // last use of view — borrow ends HERE
+    data.append(40)                                // OK: view no longer live after its last use
+
+    // ── Simultaneous shared borrows ──────────────────────────────────────────
+    var n := 100
+    let r1: &int = &n
+    let r2: &int = &n                              // OK — multiple &T allowed
+    io::println(*r1 + *r2)                         // 200
+
+    // ── Exclusive mutable borrow ─────────────────────────────────────────────
+    let rw: &mut int = &mut n
+    *rw *= 2
+    // let r3: &int = &n                           // COMPILE ERROR: n mutably borrowed
+    io::println(n)                                 // 200 (was 100, doubled in place)
+
+    // ── &mut coerces to & at call boundary ──────────────────────────────────
+    fn readOnly(x: &int) { io::println(*x) }
+    var m := 42
+    let mw: &mut int = &mut m
+    readOnly(mw)                                   // &mut automatically coerced to & for this call
+
+    // ── ARC: pointer-clone vs value-clone ────────────────────────────────────
+    var s1: ~str = mem::share("shared")
+    var s2 := s1.clone()          // pointer-clone: refcount = 2, same heap data, O(1)
+    var s3 := mem::share((*s1).clone())  // value-clone: new heap allocation, O(n)
+    io::println(*s1 == *s3)       // true — equal content, different heap blocks
+    // s3, s2, s1 dropped at scope end — refcounts decremented in reverse order
+
+    // ── Weak references — break reference cycles ─────────────────────────────
+    var strong: ~str = mem::share("alive")
+    var weak := strong.downgrade()          // ~weak<str>; strong refcount stays 1
+
+    if let s = weak.upgrade() {             // ~str? — succeeds while strong is alive
+        io::println(f"weak upgraded: {*s}")
+    }
+
+    strong = mem::share("replaced")         // original "alive" string freed (refcount → 0)
+    let gone := weak.upgrade()              // null — original value was freed
+    io::println(f"gone = {gone == null}")   // true
+
+    // ── Interior mutability via Mutex (safe shared mutation) ─────────────────
+    import std::sync
+    let counter: ~sync::Mutex<int> = mem::share(sync::Mutex<int>(0))
+    let c2 := counter.clone()              // ~Mutex — refcount 2, same mutex
+
+    let t := thread::spawn(move || -> {
+        let g := c2.lock()
+        *g += 1
+    })                                     // c2 moved into lambda — counter refcount still 2
+    t.join()
+
+    let final := counter.lock()
+    io::println(f"counter = {*final}")     // 1
+
+    // ── Lifetime annotation (explicit, for functions returning borrows) ───────
+    // When compiler cannot infer: annotate with tick-prefixed lifetime names
+    fn longest<'a>(x: &'a str, y: &'a str) -> &'a str {
+        if x.len() >= y.len() { x } else { y }
+    }
+    let s := "hello"
+    let t2 := "hi"
+    let result := longest(&s, &t2)         // result lifetime tied to shorter of s, t2
+    io::println(result)
+
+    // 'static lifetime — valid for the entire program (string literals)
+    fn staticStr() -> &'static str = "I live forever"
+    io::println(staticStr())
+}
+
+// ── Ownership with class (reference type — always ~T semantics internally) ───
+
+class Node {
+    pub value: int
+    pub next: ~Node?              // shared pointer to next — ~weak to break cycles
+
+    init(v: int) { self.value = v; self.next = null }
+}
+
+fn linkedListDemo() {
+    var head: ~Node = mem::share(Node(1))
+    var n2:   ~Node = mem::share(Node(2))
+    var n3:   ~Node = mem::share(Node(3))
+
+    head.next = n2.clone()       // head → n2 (refcount 2)
+    n2.next   = n3.clone()       // n2   → n3 (refcount 2)
+
+    var cur := head.clone()
+    while let node = cur {
+        io::println(node.value)
+        cur = node.next?.clone() ?? null
+    }
+    // head, n2, n3 freed at scope end in reverse declaration order
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PASTE AFTER: SECTION 18-A (or anywhere after Section 18)
+// NEW SECTION: 18-B — RUNTIME vs COMPILER BOUNDARY
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 18-B — RUNTIME vs COMPILER RESPONSIBILITY BOUNDARY
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  COMPILER GUARANTEES (zero runtime cost, enforced statically):
+//    — Borrow safety: no use-after-free, no double-free, no dangling pointers.
+//    — Move tracking: moved values cannot be used.
+//    — Type safety: every expression has correct static type.
+//    — Exhaustive match: all enum variants covered.
+//    — Thread safety: non-Send types cannot cross thread boundaries.
+//    — Drop point insertion: compiler decides exactly where ^T is freed.
+//    — Generic monomorphization: separate copy per concrete type.
+//    — ? lowering: conditional branch + early return.
+//
+//  RUNTIME LIBRARY (vex_rt) HANDLES:
+//    — vex_alloc / vex_free: heap memory allocation (jemalloc by default).
+//    — ARC: atomic refcount increment/decrement for ~T.
+//    — vex_panic: print message + stack trace + abort().
+//    — try/catch: setjmp/longjmp recovery point around try block.
+//    — Async scheduler: green thread multiplexing on OS thread pool.
+//    — Channel, Mutex, RwLock: synchronization primitive implementations.
+//    — String formatting engine: f"..." with format specifiers.
+//    — Module init/deinit: calls fn init() in topological order at startup.
+//    — Stack overflow detection: guard pages + signal handler.
+//    — typeid table: maps each type to unique uint64 for runtime `as` casts.
+//
+//  NO GC: memory freed deterministically. No GC pause. No GC thread.
+//  NO IMPLICIT BOXING: generics are monomorphized, not type-erased.
+//  BOUNDS CHECKS: ON in debug (-O0), OFF in release (-O2 -O3).
+//                 Use .get(i) → T? for safe access in release builds.
+//
+//  RUNTIME BINARY FOOTPRINT (static link, baked into executable):
+//    Full runtime (with async): ~120 KB
+//    Without async:              ~45 KB
+//    --no-rt (bare metal):        ~0 KB (only libc remains)
+
+fn runtimeVsCompilerDemo() {
+
+    // ── COMPILER-ENFORCED (zero runtime cost) ────────────────────────────────
+
+    // 1. Borrow safety — caught at compile time, not runtime
+    var nums := [1, 2, 3, 4, 5]
+    let view: &[]int = &nums
+    io::println(view.len())       // last use of view — NLL ends borrow here
+    nums.append(6)                // OK — view no longer live after its last use
+    // Without NLL: this would be a compile error. With NLL: this is fine.
+
+    // 2. Move tracking — compiler catches misuse
+    var owned: ^str = mem::new("text")
+    let moved := move owned
+    // io::println(*owned)        // COMPILE ERROR at compile time (not segfault at runtime)
+    io::println(*moved)
+
+    // 3. Exhaustive match — compiler verifies all cases, no runtime "unhandled case"
+    enum Traffic { Red, Yellow, Green }
+    let light := Traffic.Red
+    let action := match light {
+        Traffic.Red    => "stop"
+        Traffic.Yellow => "slow"
+        Traffic.Green  => "go"
+        // no _ needed — compiler knows all 3 variants are covered
+    }
+    io::println(action)
+
+    // 4. Drop point — compiler inserts free call here, not the programmer
+    {
+        var tmp: ^[]float64 = mem::new([1.0, 2.0, 3.0])
+        io::println(tmp.len())
+    }  // ← compiler inserts vex_free(tmp) exactly here — no programmer action needed
+
+    // ── RUNTIME LIBRARY HANDLES ──────────────────────────────────────────────
+
+    // 5. ARC refcount — runtime atomic operation, not compile-time
+    var s: ~str = mem::share("arc string")
+    var s2 := s.clone()           // runtime: atomicrmw add on refcount
+    // s2 drops at end of scope: runtime: atomicrmw sub; free if 0
+
+    // 6. Bounds check — runtime in debug, removed in release
+    var arr := [10, 20, 30]
+    // arr[5]                     // runtime panic in debug (-O0 -g)
+    //                            // undefined behavior in release (-O2) — bounds removed
+    let safe := arr.get(2) ?? -1  // always safe: returns null on out-of-bounds
+    io::println(safe)             // 30
+
+    // 7. panic — runtime: prints message + stack trace + calls abort()
+    let x := -1
+    // assert(x > 0, "x must be positive")   // would runtime-abort here
+
+    // 8. Async — runtime scheduler picks up the task, compiler generates state machine
+    let result := async::run(async fn() -> int {
+        await async::sleep(1ms)
+        99
+    }())
+    io::println(f"async result: {result}")
+
+    // 9. String formatting — runtime engine handles {x:.2f} format specs
+    let pi := 3.14159265
+    io::println(f"pi = {pi:.4f}")             // runtime formatting: "pi = 3.1416"
+
+    // 10. typeid — runtime table lookup for `as` and `as?`
+    var val: any = "hello"
+    let isStr  := val is str                   // runtime: typeid comparison
+    let asStr  := val as? str                  // runtime: typeid check, returns str?
+    io::println(f"isStr={isStr}")
+}
+
+// ── --no-rt mode (bare metal / embedded / WASM without WASI) ─────────────────
+//
+//  With --no-rt flag, the following are UNAVAILABLE:
+//    async / await   (no scheduler)
+//    channel         (requires OS primitives)
+//    Mutex / RwLock  (requires OS futex)
+//    thread::spawn   (requires OS threads)
+//    fs:: / net::    (require OS syscalls)
+//    panic stack traces (no backtrace library)
+//
+//  Still AVAILABLE with --no-rt:
+//    All comptime features, generics, type system
+//    Stack memory, fixed arrays, tuples, structs, enums
+//    math:: (pure computation)
+//    unsafe / asm blocks
+//    ~T ARC — IF user provides vex_alloc/vex_free symbols
+//
+//  Usage: vex build --no-rt --target linux-riscv64 kernel.vex
+
+// ──────────────────────────────────────────────────────────────────────────────
+// END OF MISSING SECTIONS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  WHERE TO PASTE EACH SECTION:
+//
+//  SECTION 18-A (Ownership, Borrow & ARC deep patterns)
+//    → After line: `}` closing memoryDemo() in SECTION 18
+//
+//  SECTION 12-A (Static vs Dynamic Dispatch)
+//    → After closing `}` of fn repeat<T>(...) in SECTION 12,
+//      before the `// SECTION 13` divider line
+//
+//  SECTION 15-A (Error Type Conversion — From trait)
+//    → After fn riskyCalc() at end of SECTION 15,
+//      before the `// SECTION 16` divider line
+//
+//  SECTION 24-A (Name Resolution & Import Visibility)
+//    → After `priv fn helper()` at end of SECTION 24,
+//      before the `// SECTION 25` divider line
+//
+//  SECTION 20-A (Struct / Enum ABI Layout)
+//    → After the bitfield struct StatusRegister at end of SECTION 20,
+//      before the `// SECTION 21` divider line
+//
+//  SECTION 18-B (Runtime vs Compiler Boundary)
+//    → After SECTION 18-A (after linkedListDemo),
+//      before SECTION 19 (Concurrency) divider line
+
+
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 18-B (Runtime vs Compiler) in vex_spec_final.vex
+// as SECTION 18-C — RUNTIME ARCHITECTURE DEMO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 18-C — RUNTIME ARCHITECTURE
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  STARTUP:  _start → vex_rt_init → all fn init() in dep order → fn main()
+//  SHUTDOWN: fn main() returns → all fn deinit() in reverse order → process exit
+//  HEAP:     jemalloc (default). Custom: provide vex_alloc/vex_free symbols.
+//  ASYNC:    M:N green threads. M tasks on N OS threads (N = CPU cores default).
+//  I/O:      io_uring (Linux), kqueue (macOS), IOCP (Windows), WASI (WASM).
+//  PANIC:    setjmp recovery stack → longjmp to catch, or abort() if no catcher.
+
+// ── Module init/deinit lifecycle ─────────────────────────────────────────────
+
+var _moduleReady: bool = false
+
+fn init() {
+    // Runs ONCE before fn main(), after all imported modules' init() have run.
+    // Must NOT call async functions or blocking I/O.
+    _moduleReady = true
+    io::println("module initialized")
+}
+
+fn deinit() {
+    // Runs ONCE after fn main() returns, before process exits.
+    // Runs in REVERSE init order across all modules.
+    _moduleReady = false
+    io::println("module cleaned up")
+}
+
+// ── Arena allocator — fast bump allocation ────────────────────────────────────
+
+fn arenaDemo() {
+    // Arena: one allocation upfront, O(1) bump alloc, free entire block at once
+    let arena := mem::Arena(1024 * 64)   // 64 KB pre-allocated block
+
+    unsafe {
+        let a: *int    = arena.alloc<int>()
+        let b: *float64 = arena.alloc<float64>()
+        let c: *[16]byte = arena.alloc<[16]byte>()
+
+        *a = 42
+        *b = 3.14
+        (*c)[0] = 0xFF
+
+        io::println(f"arena alloc: {*a}, {*b}")
+    }
+    // arena dropped here: entire 64 KB block freed in one call — O(1)
+    // No per-object free. Great for request-scoped temporaries.
+}
+
+// ── Async state machine (compiler-generated from async fn) ───────────────────
+//
+//  What the compiler generates internally for:
+//    async fn fetchAndDouble(url: str) -> Result<int, str>
+//
+//  Conceptual state machine (compiler writes this, you never write it manually):
+//    state 0: initiate net::get(url) → suspend (Pending), store waker
+//    state 1: net::get completed → check Result, extract body → initiate parseInt
+//    state 2: parseInt done → multiply by 2, return Ready(Ok(value))
+//
+//  Each await point = one state transition.
+//  All locals live across await points stored in the StateMachine struct on heap.
+
+async fn fetchAndDouble(url: str) -> Result<int, str> {
+    let resp := await net::get(url)?          // suspend point 0→1
+    let body := resp.body.trim()
+    let n    := int?(body) ?? return Err(f"not an int: {body}")
+    Ok(n * 2)                                 // Ready
+}
+
+async fn runtimeArchDemo() {
+    // async::run — blocks the calling OS thread until the future completes
+    // Use at the top level to enter the async world from sync code
+    let v := async::run(fetchAndDouble("https://example.com/num"))
+    io::println(f"result: {v}")
+
+    // async::spawn — fire-and-forget, does not block
+    // Returns a JoinHandle that can be awaited later
+    let handle := async::spawn(async fn() -> int {
+        await async::sleep(50ms)
+        99
+    }())
+    let result := await handle               // await the spawned task
+
+    // async::all — run multiple futures CONCURRENTLY, wait for ALL
+    let (a, b, c) := await async::all(
+        fetchAndDouble("https://api1.example.com/v"),
+        fetchAndDouble("https://api2.example.com/v"),
+        fetchAndDouble("https://api3.example.com/v"),
+    )
+    io::println(f"all: {a} {b} {c}")
+
+    // async::race — run multiple futures CONCURRENTLY, return FIRST to finish
+    let winner := await async::race(
+        fetchAndDouble("https://fast.example.com/v"),
+        fetchAndDouble("https://slow.example.com/v"),
+    )
+    io::println(f"winner: {winner}")
+
+    // async::timeout — cancel if not done in time
+    let timed := await async::timeout(
+        fetchAndDouble("https://api.example.com/v"),
+        2s,
+    )
+    match timed {
+        Ok(v2)  => io::println(f"got: {v2}")
+        Err(e)  => io::println(f"timed out or error: {e}")
+    }
+}
+
+// ── Thread-local storage ──────────────────────────────────────────────────────
+
+thread_local var requestId: int = 0      // each OS thread has its own copy
+
+fn tlsDemo() {
+    requestId = 42                         // sets THIS thread's copy
+    let t := thread::spawn(|| -> {
+        requestId = 99                     // different thread — its own copy
+        io::println(f"thread copy: {requestId}")   // 99
+    })
+    t.join()
+    io::println(f"main thread copy: {requestId}")  // 42 — unchanged
+}
+
+// ── typeid and runtime type info ─────────────────────────────────────────────
+
+fn typeIdDemo() {
+    // typeid — comptime uint64, unique per type
+    comptime const INT_ID   := typeid(int)
+    comptime const STR_ID   := typeid(str)
+    comptime assert(INT_ID != STR_ID, "typeid must be unique per type")
+
+    // typeof — runtime str name
+    let x := 42
+    io::println(typeof(x))          // "int"
+
+    var v: any = 3.14
+    io::println(typeof(v))          // "float64" (runtime — reads typeid table)
+
+    // is / as / as? use the same typeid table
+    let isFloat := v is float64         // O(1) typeid comparison
+    let asFloat := v as? float64        // O(1) check, returns float64?
+    io::println(f"isFloat={isFloat} val={asFloat ?? 0.0}")
+}
+
+
+
+
+
+
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 19 — CONCURRENCY
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn concurrencyDemo() {
+
+    // ── Threads ───────────────────────────────────────────────────────────────
+    let t1 := thread::spawn(|| -> {
+        io::println(f"Thread {thread::id()} running")
+    })
+
+    let t2 := thread::spawn(|| -> {
+        var total := 0L
+        for i in 0..1_000_000 { total += int64(i) }
+        total
+    })
+
+    t1.join()
+    let threadResult: int64 = t2.join()
+
+    // ── Channels (see CH1–CH5) ────────────────────────────────────────────────
+    // channel<T>() returns (Sender<T>, Receiver<T>) — always destructure (CH1)
+    let (send, recv) := channel::channel<int>()
+    let (sb, rb)     := channel::channel<str>(100)  // buffered
+
+    thread::spawn(move || -> {
+        for i in 0..10 {
+            send.push(i * i)
+        }
+        send.close()
+    })
+
+    for val in recv {                       // iterates until channel closed (CH2)
+        io::println(f"Received: {val}")
+    }
+
+    // select — complete syntax (CH3, CH4)
+    let (_, r1) := channel::channel<int>()
+    let (_, r2) := channel::channel<str>()
+    select {
+        val := r1.recv()   => io::println(f"int channel: {val}")
+        msg := r2.recv()   => io::println(f"str channel: {msg}")
+        timeout(500ms)     => io::println("timed out after 500ms")
+    }
+
+    // select with default (non-blocking — _ fires immediately if none ready)
+    select {
+        val := r1.recv()   => io::println(f"got: {val}")
+        _                  => io::println("nothing ready right now")
+    }
+
+    // ── Mutex ─────────────────────────────────────────────────────────────────
+    let counter := sync::Mutex<int>(0)
+
+    var threads: []Thread = []
+    for _ in 0..10 {
+        let t := thread::spawn(copy || -> {
+            let lock := counter.lock()
+            lock += 1
+        })                                  // lock released when `lock` drops
+        threads.append(t)
+    }
+    for t in threads { t.join() }
+    io::println(f"Counter: {counter.lock()}")
+
+    // RwLock
+    let cache := sync::RwLock<[str:str]>(["key": "val"])
+    let read  := cache.readLock()
+    io::println(read["key"] ?? "")
+
+    let write := cache.writeLock()
+    write["newKey"] = "newVal"
+
+    // ── Atomic ────────────────────────────────────────────────────────────────
+    let atomicInt  := sync::Atomic<int>(0)
+    atomicInt.add(1)
+    atomicInt.sub(1)
+    let old   := atomicInt.swap(42)
+    let ok    := atomicInt.compareSwap(42, 100)
+    let val2  := atomicInt.load()
+    atomicInt.store(0)
+
+    // ── Async / Await ─────────────────────────────────────────────────────────
+    let outcome := async::run(asyncMain())
+}
+
+async fn asyncMain() {
+    let data := await fetchSomething()?
+    io::println(f"Got: {data}")
+
+    let (r1, r2, r3) := await async::all(
+        fetchData("https://api1.example.com"),
+        fetchData("https://api2.example.com"),
+        fetchData("https://api3.example.com"),
+    )
+
+    let fastest := await async::race(
+        fetchData("https://api1.example.com"),
+        fetchData("https://api2.example.com"),
+    )
+}
+
+async fn fetchData(url: str) -> Result<str, str> {
+    let resp := await net::get(url)?
+    Ok(resp.body)
+}
+
+async fn fetchSomething() -> Result<str, str> = Ok("data")
+
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 19 (Concurrency) in vex_spec_final.vex
+// as SECTION 19-A — CONCURRENCY DEEP PATTERNS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 19-A — CONCURRENCY DEEP PATTERNS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  SEND / SYNC:
+//    Send = safe to TRANSFER to another thread (primitives, ^T, ~T, Mutex<T>)
+//    Sync = safe to SHARE &T across threads (&T is Send iff T: Sync)
+//    NOT Send: &T, *T, thread_local references
+//
+//  CHANNEL RULES:
+//    CH1: always destructure: let (tx, rx) := channel::channel<T>()
+//    CH2: for v in rx iterates until channel closed and drained
+//    CH3: select arms: recv, timeout(), or _ (default/non-blocking)
+//    CH4: select evaluates channels before waiting; wrap in loop for repeated select
+//    CH5: Sender is Clone (multi-producer). Receiver is NOT Clone (single consumer).
+
+// ── Send/Sync enforcement ────────────────────────────────────────────────────
+
+fn sendSyncDemo() {
+    var n := 42
+    let r: &int = &n
+
+    // &int is NOT Send — compiler rejects this
+    // thread::spawn(move || -> { io::println(*r) })   // COMPILE ERROR: &int not Send
+
+    // ^T is Send — transfer is fine
+    var owned: ^int = mem::new(100)
+    let t := thread::spawn(move || -> {
+        io::println(*owned)    // owned moved into thread — safe
+    })
+    t.join()
+
+    // ~T is Send when T: Sync — share across threads via cloning
+    let shared: ~sync::Mutex<int> = mem::share(sync::Mutex<int>(0))
+    let shared2 := shared.clone()   // ~Mutex is Send + Sync
+
+    let t2 := thread::spawn(move || -> {
+        let g := shared2.lock().unwrap()
+        *g += 10
+    })
+    t2.join()
+    io::println(*shared.lock().unwrap())   // 10
+}
+
+// ── Channel: multi-producer single-consumer (MPSC) ───────────────────────────
+
+fn mpscDemo() {
+    let (tx, rx) := channel::channel<int>(100)   // buffered, capacity 100
+
+    // Sender is Clone — multiple producers
+    let tx2 := tx.clone()
+    let tx3 := tx.clone()
+
+    let t1 := thread::spawn(move || -> {
+        for i in 0..5 { tx.push(i) }
+        tx.close()
+    })
+    let t2 := thread::spawn(move || -> {
+        for i in 10..15 { tx2.push(i) }
+        tx2.close()
+    })
+    let t3 := thread::spawn(move || -> {
+        for i in 20..25 { tx3.push(i) }
+        tx3.close()
+    })
+
+    t1.join(); t2.join(); t3.join()
+
+    // rx iterates until ALL senders closed and buffer drained (CH2)
+    var received: []int = []
+    for v in rx { received.append(v) }
+    received.sortBy(|a, b| -> a - b)
+    io::println(f"received {received.len()} values")
+}
+
+// ── select with multiple channels and timeout ─────────────────────────────────
+
+async fn selectDemo() {
+    let (tx1, rx1) := channel::channel<str>(1)
+    let (tx2, rx2) := channel::channel<int>(1)
+
+    // Produce values asynchronously
+    async::spawn(async fn() {
+        await async::sleep(100ms)
+        tx1.push("hello from ch1")
+    }())
+
+    async::spawn(async fn() {
+        await async::sleep(200ms)
+        tx2.push(42)
+    }())
+
+    // Repeatedly select until both channels exhausted
+    var done := 0
+    loop {
+        select {
+            msg := rx1.recv() => {
+                io::println(f"ch1: {msg}")
+                done++
+            }
+            num := rx2.recv() => {
+                io::println(f"ch2: {num}")
+                done++
+            }
+            timeout(500ms) => {
+                io::println("timed out waiting")
+                stop
+            }
+        }
+        if done >= 2 { stop }
+    }
+}
+
+// ── select non-blocking (default arm) ────────────────────────────────────────
+
+fn nonBlockingSelect() {
+    let (tx, rx) := channel::channel<int>(10)
+    tx.push(1); tx.push(2)
+
+    loop {
+        select {
+            v := rx.recv() => io::println(f"got {v}")
+            _              => { stop }   // nothing ready — exit
+        }
+    }
+}
+
+// ── Mutex poisoning handling ──────────────────────────────────────────────────
+
+fn mutexPoisonDemo() {
+    let m := sync::Mutex<int>(0)
+    let m2 := m.clone()       // ~Mutex — shared
+
+    // This thread will panic while holding the lock — poisoning the mutex
+    let t := thread::spawn(move || -> {
+        let g := m2.lock().unwrap()
+        *g = 99
+        panic("thread crashed while holding lock")
+    })
+    t.join()   // join even if thread panicked
+
+    // Now the mutex is poisoned — lock() returns Result
+    match m.lock() {
+        Ok(g)  => io::println(f"value: {*g}")
+        Err(e) => {
+            // PoisonError gives access to the guard anyway
+            let g := e.intoInner()
+            io::println(f"poisoned but value was: {*g}")  // 99
+        }
+    }
+}
+
+// ── Atomic memory ordering ────────────────────────────────────────────────────
+
+fn atomicOrderingDemo() {
+    let flag  := sync::Atomic<bool>(false)
+    let data  := sync::Atomic<int>(0)
+    let flag2 := flag.clone()
+
+    let writer := thread::spawn(move || -> {
+        data.store(42, .Release)        // all prior writes visible after reader's Acquire
+        flag2.store(true, .Release)     // release — pairs with reader's Acquire
+    })
+
+    // Spin until flag is true — then data is guaranteed to be 42
+    while !flag.load(.Acquire) { }     // acquire — sees all stores before Release
+    io::println(data.load(.Relaxed))   // 42 — guaranteed by Acquire/Release pair
+
+    writer.join()
+
+    // Compare-and-swap: lock-free counter increment
+    let counter := sync::Atomic<int>(0)
+    loop {
+        let old := counter.load(.Relaxed)
+        let new := old + 1
+        if counter.compareSwap(old, new, .AcqRel) { stop }   // retry on failure
+    }
+    io::println(counter.load(.SeqCst))  // 1
+}
+
+// ── Async: blocking vs non-blocking inside async fn ──────────────────────────
+
+async fn properAsyncIO() -> Result<str, str> {
+    // RIGHT: async I/O — yields thread to other tasks while waiting
+    let content := await fs::readFileAsync("data.txt")?
+
+    // RIGHT: async sleep — yields thread
+    await async::sleep(10ms)
+
+    // RIGHT: async HTTP — yields thread
+    let resp := await net::get("https://api.example.com/data")?
+
+    Ok(content + resp.body)
+}
+
+// WRONG pattern (shown as comment — do not do this):
+// async fn wrongAsyncIO() {
+//     thread::sleep(1s)              // WRONG: blocks entire OS thread
+//     let _ := fs::readFile("x.txt") // WRONG: sync blocking I/O in async fn
+// }
+
+// ── Structured concurrency: all vs race vs timeout ───────────────────────────
+
+async fn structuredConcurrencyDemo() {
+    // all: all must succeed; one failure cancels the rest
+    let results := await async::all(
+        net::get("https://api1.example.com"),
+        net::get("https://api2.example.com"),
+        net::get("https://api3.example.com"),
+    )
+    // results: (Result<Resp,str>, Result<Resp,str>, Result<Resp,str>)
+
+    // race: first one wins; others cancelled
+    let fastest := await async::race(
+        net::get("https://api1.example.com"),
+        net::get("https://api2.example.com"),
+    )
+    io::println(fastest?.body ?? "error")
+
+    // timeout: cancel if not done in time
+    let limited := await async::timeout(net::get("https://slow.example.com"), 1s)
+    match limited {
+        Ok(resp) => io::println(resp.body)
+        Err(e)   => io::println(f"timed out: {e}")
+    }
+
+    // spawn + join: explicit task handles
+    let h1 := async::spawn(net::get("https://api1.example.com"))
+    let h2 := async::spawn(net::get("https://api2.example.com"))
+    // do other work here while h1, h2 run concurrently
+    let r1 := await h1
+    let r2 := await h2
+    io::println(f"both done: {r1.isOk()} {r2.isOk()}")
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 20 — INTEROPERABILITY
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  Vex calls OUT to C and C++ only (native, zero overhead, same ABI).
+//  Everything else calls INTO Vex (.so or .wasm).
+//  Vex never embeds another language's runtime.
+
+extern "C" {
+    fn printf(fmt: *byte, ...any) -> int32
+    fn malloc(size: uint) -> *any
+    fn free(ptr: *any) -> void
+    fn strlen(s: *byte) -> uint
+    fn strcmp(a: *byte, b: *byte) -> int32
+    fn exit(code: int32) -> never
+}
+
+extern "C" link("libssl") {
+    fn SSL_CTX_new(method: *any) -> *any
+    fn SSL_new(ctx: *any) -> *any
+    fn SSL_connect(ssl: *any) -> int32
+    fn SSL_free(ssl: *any) -> void
+    fn SSL_CTX_free(ctx: *any) -> void
+}
+
+extern "C" link("libsqlite3") {
+    fn sqlite3_open(filename: *byte, db: **any) -> int32
+    fn sqlite3_exec(db: *any, sql: *byte, cb: *any, arg: *any, err: **byte) -> int32
+    fn sqlite3_close(db: *any) -> int32
+}
+
+fn cInteropDemo() {
+    // ffi::withCString — safest pattern (pointer cannot escape lambda)
+    let length := ffi::withCString("hello", |cstr: *byte| -> {
+        unsafe { strlen(cstr) }
+    })
+    io::println(f"C strlen = {length}")
+
+    // ffi::toCString — when pointer must outlive lambda
+    let cstr: ^[]byte = ffi::toCString("hello world")
+    unsafe { printf("%s\n".bytes().ptr(), cstr.ptr()) }
+
+    // ffi::fromCString — C string into Vex str
+    unsafe {
+        let cptr: *byte = "hello".bytes().ptr()
+        let vexStr := ffi::fromCString(cptr)
+        io::println(vexStr)
+    }
+
+    // Raw C memory
+    unsafe {
+        let raw: *int32 = malloc(sizeof(int32)) as *int32
+        if raw == null as *int32 { panic("malloc failed") }
+        *raw = 99
+        io::println(f"C heap value: {*raw}")
+        free(raw as *any)
+    }
+}
+
+// C-compatible struct
+@packed
+@derive(C_Layout)
+struct CPoint { x: float32, y: float32 }
+
+// Exporting Vex to C / Python / any language
+@export("vex_add")
+pub fn vexAdd(a: int32, b: int32) -> int32 = a + b
+
+@export("vex_fibonacci")
+pub fn vexFibonacci(n: int32) -> int64 {
+    if n <= 1 { return int64(n) }
+    var fa, fb := 0L, 1L
+    for _ in 0..n { fa, fb = fb, fa + fb }
+    fa
+}
+
+// Exporting to WebAssembly
+@wasmExport("add")
+pub fn wasmAdd(a: int32, b: int32) -> int32 = a + b
+
+// Inline assembly
+fn rdtsc() -> uint64 {
+    asm x86_64 {
+        "rdtsc"
+        "shl rdx, 32"
+        "or rax, rdx"
+        out("rax") result
+    }
+}
+
+// C struct layout
+@packed
+struct NetworkPacket {
+    version:  uint8
+    flags:    uint8
+    length:   uint16
+    checksum: uint32
+    payload:  [64]byte
+}
+
+@align(16)
+struct SimdVector {
+    x: float32
+    y: float32
+    z: float32
+    w: float32
+}
+
+bitfield struct StatusRegister: uint32 {
+    carry:     1
+    zero:      1
+    overflow:  1
+    negative:  1
+    reserved:  4
+    mode:      8
+    interrupt: 1
+    _:         15
+}
+
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PASTE AFTER: SECTION 20 — INTEROPERABILITY
+// NEW SECTION: 20-A — STRUCT / ENUM ABI LAYOUT (size, alignment, padding)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 20-A — STRUCT / ENUM ABI LAYOUT
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  DEFAULT STRUCT LAYOUT (no attributes):
+//    Fields placed in declaration order with NATURAL ALIGNMENT padding.
+//    Compiler MAY reorder fields to minimize padding (unless @derive(C_Layout)
+//    or @packed is present — those freeze declaration order).
+//
+//  NATURAL ALIGNMENT (on 64-bit):
+//    bool / int8 / uint8 / byte  → size 1,  align 1
+//    int16 / uint16              → size 2,  align 2
+//    int32 / uint32 / float32    → size 4,  align 4
+//    int64 / uint64 / float64    → size 8,  align 8
+//    char                        → size 4,  align 4  (Unicode codepoint)
+//    *T / ^T / ~T / &T           → size 8,  align 8  (pointer-sized)
+//    str (fat pointer)           → size 16, align 8  ({ *byte, uint64 })
+//    []T (fat pointer)           → size 24, align 8  ({ *T, uint64, uint64 })
+//    [N]T                        → size N*sizeof(T), align alignof(T)
+//    (A, B) tuple                → same rules as anonymous struct
+//
+//  ENUM TAGGED-UNION LAYOUT:
+//    [ tag: uint32 | padding | data: max(sizeof(all variants)) ]
+//    Tag values: assigned in declaration order starting at 0.
+//    All variants share the same data section (union-style memory overlap).
+//
+//  NICHE OPTIMIZATION (compiler-applied, no user syntax):
+//    If a variant holds a non-nullable pointer (^T ~T &T), the compiler may
+//    use the null pointer value as the tag for a no-data variant — eliminating
+//    the tag field. Applied only when @derive(C_Layout) is NOT present.
+
+// ── Default layout — compiler may reorder for minimal padding ────────────────
+
+struct NaiveLayout {
+    a: bool      // 1 byte,  align 1
+    b: float64   // 8 bytes, align 8  ← compiler will pad 7 bytes before this
+    c: int32     // 4 bytes, align 4
+    d: int8      // 1 byte,  align 1
+    // As declared: 1 + 7pad + 8 + 4 + 1 + 6pad = 28 bytes (with tail padding to 32)
+    // Compiler may reorder to: b(8) + c(4) + a(1) + d(1) + 2pad = 16 bytes
+}
+
+// ── C-compatible layout — NO reordering, declaration order enforced ───────────
+
+@packed
+@derive(C_Layout)
+struct CStructLayout {
+    version:  uint8    // offset 0
+    flags:    uint8    // offset 1
+    length:   uint16   // offset 2
+    checksum: uint32   // offset 4
+    reserved: uint32   // offset 8
+    // total: 12 bytes, no padding (@packed), declaration order frozen
+}
+
+// ── Padded C-compatible (natural alignment, declaration order) ────────────────
+
+@derive(C_Layout)
+struct PaddedCLayout {
+    code:    uint8    // offset 0
+    // 3 bytes padding (align uint32)
+    value:   uint32   // offset 4
+    flag:    bool     // offset 8
+    // 7 bytes padding (align float64)
+    amount:  float64  // offset 16
+    // total: 24 bytes
+}
+
+// ── SIMD-aligned struct ───────────────────────────────────────────────────────
+
+@align(16)
+struct Vec4f {
+    x: float32   // 4 bytes
+    y: float32   // 4 bytes
+    z: float32   // 4 bytes
+    w: float32   // 4 bytes
+    // total: 16 bytes, aligned to 16 (required for SSE/NEON loads)
+}
+
+@align(32)
+struct Vec8f {
+    data: [8]float32
+    // total: 32 bytes, aligned to 32 (required for AVX loads)
+}
+
+// ── Enum ABI — tagged union ───────────────────────────────────────────────────
+
+enum Message {
+    Quit                            // tag=0, data: nothing
+    Move(x: int32, y: int32)        // tag=1, data: 8 bytes
+    Write(text: str)                // tag=2, data: 16 bytes (str fat pointer)
+    Color(r: uint8, g: uint8, b: uint8) // tag=3, data: 3 bytes
+    // Layout: tag(4) + pad(4) + data(16) = 24 bytes total
+    // All variants share the 16-byte data section
+}
+
+// ── Niche optimization example (compiler-applied) ────────────────────────────
+// Result<^int, bool>:
+//   Ok(^int)  → non-null pointer
+//   Err(bool) → null pointer (0) for Err(false), special value for Err(true)
+//   Compiler may eliminate the tag field entirely, shrinking the enum.
+
+// ── sizeof / alignof for ABI verification ────────────────────────────────────
+
+fn abiSizesDemo() {
+    // All comptime — no runtime cost
+    comptime const CSTRUCT_SIZE    := sizeof(CStructLayout)    // 12
+    comptime const PADDED_SIZE     := sizeof(PaddedCLayout)    // 24
+    comptime const VEC4_SIZE       := sizeof(Vec4f)            // 16
+    comptime const VEC4_ALIGN      := alignof(Vec4f)           // 16
+    comptime const MESSAGE_SIZE    := sizeof(Message)          // 24
+    comptime const STR_SIZE        := sizeof(str)              // 16 (fat pointer)
+    comptime const LIST_INT_SIZE   := sizeof([]int)            // 24 (fat pointer)
+    comptime const POINT_SIZE      := sizeof(Point)            // 16 (two float64)
+
+    io::println(f"CStructLayout : {CSTRUCT_SIZE} bytes")
+    io::println(f"PaddedCLayout : {PADDED_SIZE} bytes")
+    io::println(f"Vec4f         : {VEC4_SIZE} bytes, align {VEC4_ALIGN}")
+    io::println(f"Message enum  : {MESSAGE_SIZE} bytes")
+    io::println(f"str           : {STR_SIZE} bytes")
+    io::println(f"[]int         : {LIST_INT_SIZE} bytes")
+    io::println(f"Point         : {POINT_SIZE} bytes")
+
+    // Verify C-layout matches expected (useful for FFI)
+    comptime assert(sizeof(CStructLayout) == 12, "CStructLayout size mismatch — FFI will break")
+    comptime assert(alignof(Vec4f) == 16, "Vec4f must be 16-byte aligned for SIMD")
+}
+
+// ── str and []T fat pointer layout in practice ───────────────────────────────
+
+fn fatPointerDemo() {
+    // str = { ptr: *uint8, len: uint64 }  (16 bytes on 64-bit)
+    let s := "hello"
+    io::println(f"str bytes={s.len()}")              // byte length (the `len` field)
+    io::println(f"str size in memory={sizeof(str)}") // 16 bytes (the fat pointer itself)
+
+    // []T = { ptr: *T, len: uint64, cap: uint64 }  (24 bytes on 64-bit)
+    var list: []int = [1, 2, 3]
+    list.reserve(10)
+    io::println(f"[]int len={list.len()}")           // 3 (live elements)
+    io::println(f"[]int size in memory={sizeof([]int)}") // 24 bytes (the fat pointer)
+
+    // A function taking &str receives a pointer to the 16-byte fat pointer — NOT a copy
+    fn printLen(s: &str) { io::println(s.len()) }
+    printLen(&s)
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 20 (Interoperability) in vex_spec_final.vex
+// as SECTION 20-B — ABI & DATA LAYOUT DEMO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 20-B — ABI & DATA LAYOUT
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  VEX CALLING CONVENTION:
+//    Uses the platform system ABI — no custom convention.
+//    Linux/macOS x86-64 : System V AMD64  (rdi rsi rdx rcx r8 r9 for ints; xmm0-7 for floats)
+//    Windows x86-64     : Microsoft x64   (rcx rdx r8 r9; xmm0-3 for floats; 32-byte shadow)
+//    Linux/macOS arm64  : AAPCS64         (x0-x7 for ints; v0-v7 for floats)
+//    WASM               : operand stack   (i32/i64/f32/f64 only at boundary)
+//
+//  STRUCT PASSING:
+//    <= 16 bytes (SysV) / <= 8 bytes (Win64): in registers when fields fit.
+//    Larger: passed by hidden pointer as first argument.
+//    @packed always by pointer regardless of size.
+
+// ── Type sizes verifiable at comptime ────────────────────────────────────────
+
+fn abiLayoutDemo() {
+    // Primitive sizes
+    comptime assert(sizeof(bool)    == 1,  "bool must be 1 byte")
+    comptime assert(sizeof(int8)    == 1,  "int8 must be 1 byte")
+    comptime assert(sizeof(int16)   == 2,  "int16 must be 2 bytes")
+    comptime assert(sizeof(int32)   == 4,  "int32 must be 4 bytes")
+    comptime assert(sizeof(float32) == 4,  "float32 must be 4 bytes")
+    comptime assert(sizeof(char)    == 4,  "char must be 4 bytes (Unicode scalar)")
+    comptime assert(sizeof(int64)   == 8,  "int64 must be 8 bytes")
+    comptime assert(sizeof(float64) == 8,  "float64 must be 8 bytes")
+    comptime assert(sizeof(int)     == 8,  "int must be 8 bytes on 64-bit")
+
+    // Fat pointer sizes
+    comptime assert(sizeof(str)     == 16, "str fat pointer must be 16 bytes")
+    comptime assert(sizeof([]int)   == 24, "[]T fat pointer must be 24 bytes")
+    comptime assert(alignof(str)    == 8,  "str must be 8-byte aligned")
+
+    // Struct layout with padding
+    struct Padded { a: int8, b: int64, c: int32 }
+    // natural layout: a(1) + 7pad + b(8) + c(4) + 4pad = 24 bytes
+    // compiler may reorder: b(8) + c(4) + a(1) + 3pad = 16 bytes
+    io::println(f"Padded size: {sizeof(Padded)}")   // 16 (after reorder)
+
+    // C-layout struct — declaration order frozen, predictable offsets
+    @derive(C_Layout)
+    struct CFixed { code: uint8, value: uint32, amount: float64 }
+    // offsets: code(0) + 3pad + value(4) + amount(8) = 16 bytes total
+    comptime assert(sizeof(CFixed) == 16, "CFixed layout must match C")
+
+    // @packed — no padding at all
+    @packed struct Packed { a: uint8, b: uint32, c: uint16 }
+    comptime assert(sizeof(Packed) == 7, "Packed must be exactly 7 bytes")
+
+    // @align — force SIMD alignment
+    @align(16) struct Quad { x: float32, y: float32, z: float32, w: float32 }
+    comptime assert(sizeof(Quad)   == 16, "Quad must be 16 bytes")
+    comptime assert(alignof(Quad)  == 16, "Quad must be 16-byte aligned")
+
+    // Enum tagged-union sizes
+    enum Small { A, B, C }                             // tag only, no payload
+    enum Tagged { None, Some(x: float64) }             // tag(4)+pad(4)+data(8) = 16
+    enum Big { X(a: float64, b: float64, c: float64) } // tag(4)+pad(4)+data(24) = 32
+
+    io::println(f"Small enum: {sizeof(Small)} bytes")   // 4 (tag only)
+    io::println(f"Tagged enum: {sizeof(Tagged)} bytes") // 16
+    io::println(f"Big enum: {sizeof(Big)} bytes")       // 32
+
+    // const enum — backed by integer, no tag overhead
+    const enum Flags: uint32 { A = 1, B = 2, C = 4 }
+    comptime assert(sizeof(Flags) == 4, "const enum backed by uint32 = 4 bytes")
+
+    // Static field is NOT in the struct instance
+    struct Counter { value: int, static count: int = 0 }
+    comptime assert(sizeof(Counter) == 8, "static field not included in sizeof")
+    Counter.count++  // accesses global data segment, not any Counter instance
+}
+
+// ── Calling convention demo ───────────────────────────────────────────────────
+
+// This function follows System V AMD64 ABI when exported:
+// a→rdi, b→rsi, c→rdx; return→rax
+@export("vex_three_args")
+pub fn threeArgs(a: int64, b: int64, c: int64) -> int64 = a + b + c
+
+// Struct > 16 bytes passed by hidden pointer
+struct BigResult { x: float64, y: float64, z: float64 }  // 24 bytes
+fn computeBig(n: float64) -> BigResult = BigResult { x: n, y: n*2.0, z: n*3.0 }
+// caller allocates space on stack; hidden pointer passed as first arg
+
+// WASM boundary — only primitives cross; str passed as (ptr, len) pair
+@wasmExport("process_len")
+pub fn processLen(offset: int32, byteLen: int32) -> int32 {
+    // In WASM: caller writes str bytes to linear memory, passes offset+len
+    // Real implementation would read from WASM memory here
+    byteLen
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 21 — TYPE ALIASES & UNION TYPES
+// ──────────────────────────────────────────────────────────────────────────────
+
+// Type alias — new name for existing type (interchangeable)
+type UserId2     = int64
+type Callback    = fn(str) -> void
+type Matrix3x3   = [3][3]float64
+type IntList     = []int
+type StringMap<V> = [str:V]
+
+// Union type (C-style, unsafe — raw memory overlap)
+union IpAddr {
+    as_u32:   uint32
+    as_bytes: [4]byte
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 22 — DECORATORS / ANNOTATIONS
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  BUILT-IN DECORATORS:
+//    @inline @noinline @hot @cold @pure @unsafe
+//    @deprecated(msg) @override @export(name) @extern(name)
+//    @packed @align(n) @test @bench @doc(str)
+//    @derive(Clone, Debug, Eq, Ord, Hash, Default, Display, C_Layout)
+
+@decorator_def
+comptime fn retry(times: int) -> fn(fn) -> fn {
+    |f| -> || -> {
+        var attempts := 0
+        var lastErr: str? = null
+        while attempts < times {
+            match try { f() } catch e { Err(e.message) } {
+                Ok(v)  => return v
+                Err(e) => { lastErr = e; attempts++ }
+            }
+        }
+        panic(f"Failed after {times} attempts: {lastErr}")
+    }
+}
+
+@doc("Fetches data with automatic retry on failure")
+@retry(3)
+@hot
+fn fetchWithRetry(url: str) -> str {
+    net::get(url).unwrap().body
+}
+
+@derive(Clone, Debug, Eq, Hash, Default)
+struct Config {
+    host:    str  = "localhost"
+    port:    int  = 8080
+    debug:   bool = false
+    timeout: int  = 30
+}
+
+@test
+fn testAddition() {
+    assertEq(add(2, 3), 5, "2+3 must equal 5")
+    assertEq(add(-1, 1), 0, "-1+1 must equal 0")
+    assertEq(add(0, 0), 0, "0+0 must equal 0")
+}
+
+@test
+fn testDivmod() {
+    let (q, r) := divmod(17, 5)
+    assertEq(q, 3, "quotient")
+    assertEq(r, 2, "remainder")
+}
+
+@test
+fn testDistinctTypes() {
+    let oid := OrderId(42)
+    assertEq(oid, OrderId(42), "same order id")
+    assertEq(oid.rawValue, 42L, "raw value")
+}
+
+@test
+fn testIntOverflow() {
+    var x: int8 = 100
+    assertEq(x +% 50, int8(-106), "wrapping add")
+    assertEq(x +| 50, int8(127),  "saturating add")
+}
+
+@bench
+fn benchSquare() {
+    for _ in 0..1_000_000 { let _ = square(42) }
+}
+
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 22 (Decorators) in vex_spec_final.vex
+// as SECTION 22-A — @derive AUTO-IMPLEMENTATIONS
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 22-A — @derive AUTO-IMPLEMENTATIONS
+// ──────────────────────────────────────────────────────────────────────────────
+
+@derive(Clone, Debug, Display, Eq, Ord, Hash, Default)
+struct Coord {
+    x: float64 = 0.0
+    y: float64 = 0.0
+
+    init(x, y)
+    init(xy: float64) { self.x = xy; self.y = xy }
+}
+
+@derive(Clone, Debug, Display, Eq, Hash)
+enum Suit { Hearts, Diamonds, Clubs, Spades }
+
+@derive(Clone, Debug, Display, Eq, Ord, Hash)
+struct Card {
+    rank: int       // 1–13
+    suit: Suit
+    init(rank, suit)
+}
+
+fn deriveDemo() {
+    // @derive(Clone) — deep clone, each field cloned
+    let c1 := Coord(3.0, 4.0)
+    let c2 := c1.clone()         // independent copy
+    io::println(c1 == c2)        // true (same values)
+
+    // @derive(Default) — all fields set to declared defaults
+    let def := Coord.default()
+    io::println(f"{def.x} {def.y}")    // 0.0 0.0
+
+    // @derive(Display) — op str() auto-generated
+    io::println(c1)              // "Coord(x=3.0, y=4.0)"
+    io::println(f"{c1}")         // same via f-string
+
+    // @derive(Debug) — toRepr() auto-generated (used by !r)
+    io::println(f"{c1!r}")       // "Coord { x: 3.0, y: 4.0 }"
+
+    // @derive(Eq) — == and != auto-generated, field by field
+    let c3 := Coord(3.0, 4.0)
+    let c4 := Coord(1.0, 2.0)
+    io::println(c1 == c3)        // true
+    io::println(c1 != c4)        // true
+
+    // @derive(Ord) — compareTo and <, >, <=, >= auto-generated
+    // Lexicographic: compares x first, then y
+    io::println(c4 < c1)         // true  (1.0 < 3.0 on x)
+    io::println(c1 > c4)         // true
+
+    // Sort a list using derived Ord
+    var coords := [Coord(3.0, 0.0), Coord(1.0, 5.0), Coord(1.0, 2.0)]
+    let sorted := coords.sortBy(|a, b| -> a.compareTo(b))
+    io::println(sorted)          // Coord(1,2), Coord(1,5), Coord(3,0)
+
+    // @derive(Hash) — hash() auto-generated (for use as map key)
+    var map: [Coord: str] = [c1: "origin-ish"]
+    map[Coord(1.0, 2.0)] = "low"
+    io::println(map[c1] ?? "missing")
+
+    // @derive on enum
+    let s1 := Suit.Hearts
+    let s2 := s1.clone()
+    io::println(s1 == s2)        // true
+    io::println(s1)              // "Hearts" (Display)
+    io::println(f"{s1!r}")       // "Hearts" (Debug for unit variant)
+
+    // @derive(Ord) on struct with enum field
+    let card1 := Card(1, Suit.Hearts)
+    let card2 := Card(2, Suit.Hearts)
+    let card3 := Card(1, Suit.Spades)
+    io::println(card1 < card2)   // true  (rank 1 < 2)
+    // card3 vs card1: rank equal (1 == 1), compare suit → Hearts vs Spades (by tag order)
+
+    // Collecting into map (requires Hash + Eq on key)
+    var cardMap: [Card: str] = [card1: "ace of hearts"]
+    io::println(cardMap[card1] ?? "not found")
+}
+
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 23 — COMPTIME
+// ──────────────────────────────────────────────────────────────────────────────
+
+comptime const BUFFER_SIZE: uint  = 4096
+comptime const MAX_THREADS: int   = 16
+comptime const IS_64BIT: bool     = sizeof(*any) == 8
+comptime const PLATFORM: str      = #OS
+
+// comptimeFact — comptime-only factorial (different from runtime `factorial`)
+// Uses comptimeFact to avoid name conflict with runtime factorial() (see changelog #16)
+comptime const FACT_10 := comptimeFact(10)
+comptime const FACT_20 := comptimeFact(20)
+
+comptime type NativeInt = if IS_64BIT { int64 } else { int32 }
+
+// Comptime struct generation
+comptime fn makeArrayStruct(N: int, T: type) -> type {
+    struct { data: [N]T, len: int }
+}
+type Stack10int = makeArrayStruct(10, int)
+
+// Conditional compilation
+#if OS == "windows" {
+    fn pathSeparator() -> char = '\\'
+    fn newline()      -> str  = "\r\n"
+} elif OS == "linux" || OS == "macos" {
+    fn pathSeparator() -> char = '/'
+    fn newline()      -> str  = "\n"
+}
+
+// Comptime reflection using .(field.name) syntax (CT13–CT15)
+// This is the canonical pattern for iterating struct fields at comptime
+comptime fn sumAllIntFields<T>(val: T) -> int {
+    var total := 0
+    comptime for field in T.fields {
+        // field.name is a comptime str value (from T.fields / FieldDesc)
+        // .(field.name) is valid here because we are in a comptime fn (CT13)
+        total += val.(field.name)
+    }
+    total
+}
+
+// Example struct for reflection demo
+struct Vec3 { x: int, y: int, z: int }
+
+comptime const VEC_SUM := sumAllIntFields(Vec3 { x: 1, y: 2, z: 3 })   // 6
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 24 — MODULES
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  Every .vex or .vxl file is a module. Filename = module name.
+//  No `package` or `module` keyword ever.
+//
+//  DEFAULT VISIBILITY at module level:
+//    fn, struct, class, enum, trait, interface, const, type → pub
+//    global var → priv
+//
+//  THREE IMPORT FORMS:
+//    import std::io              → io:: prefix (Form 1)
+//    import shapes               → shapes:: prefix (Form 1)
+//    import shapes as geo        → geo:: prefix (Form 1)
+//    import myapp::io as myio    → myio:: prefix (Form 1, alias)
+//    import std::io { println }  → println() direct + io::println() both work (Form 2)
+//    import std::io { * }        → all io names direct + io::name both work (Form 3)
+//
+//  CALLING:
+//    io::println("hello")            ← Form 1 qualified (unchanged)
+//    math::sqrt(4.0)                 ← Form 1 qualified (unchanged)
+//    shapes::Circle(3.0)             ← Form 1 qualified (unchanged)
+//    println("hello")                ← Form 2/3 direct (after selective/open import)
+//    sqrt(4.0)                       ← Form 2/3 direct (after selective/open import)
+//    mod.x                           ← module-level variable (when shadowed)
+//
+//  CONFLICT RULES (see MOD12):
+//    Same module last-segment         → must alias one   (COMPILE ERROR if not)
+//    Same function name, diff sig     → overload resolves at call site (OK)
+//    Same function name, same sig     → must alias module (COMPILE ERROR)
+//    Same type/const name conflict    → must alias module (COMPILE ERROR)
+//
+//  CIRCULAR IMPORTS = COMPILE ERROR (dependency graph must be a DAG)
+//  NAME CONFLICTS:  import myapp::io as myio  (alias mandatory on clash)
+//
+//  .vxl IMPL BLOCKS (MOD17):
+//    You CAN add methods to a .vxl type IF:
+//      — you implement a trait defined in YOUR module (orphan rule OK)
+//    You CANNOT implement a stdlib trait for a .vxl type (orphan rule violation)
+
+pub const VERSION: str = "4.0.0"
+priv var _initialized: bool = false
+
+fn init() {
+    _initialized = true
+    io::println(f"Module vex_spec v{VERSION} loaded")
+}
+
+pub fn publicApi() -> str = "I am public"
+priv fn helper()   -> str = "I am private to this file"
+
+// ── Form 2: selective import ──────────────────────────────────────────────────
+
+// In a different file that imports this module:
+//
+//   import std::math { sqrt, PI, min, max }
+//
+//   fn circleArea(r: float64) -> float64 {
+//       PI * r * r           // direct — no prefix needed
+//   }
+//
+//   fn hypotenuse(a: float64, b: float64) -> float64 {
+//       sqrt(a*a + b*b)      // direct
+//   }
+//
+//   fn clampedSqrt(x: float64) -> float64 {
+//       sqrt(max(0.0, x))    // direct — both sqrt and max usable directly
+//       // math::sqrt(x)     // qualified form also still works
+//   }
+
+// ── Form 2: selective import with rename ──────────────────────────────────────
+
+//   import std::math { sqrt as squareRoot, PI as Pi }
+//   import mem::io as a { println }    // alias + selective: a::println or println
+//
+//   fn demo() {
+//       squareRoot(16.0)              // renamed direct
+//       Pi                            // renamed direct
+//       println("via mem::io")        // direct (from mem::io, not std::io)
+//       a::println("qualified")       // qualified via alias
+//   }
+
+// ── Form 3: open import ───────────────────────────────────────────────────────
+
+//   import std::io { * }
+//
+//   fn demo() {
+//       println("hello")       // direct — all of io in scope
+//       printErr("oops")       // direct
+//       io::println("hello")   // qualified — also works
+//   }
+
+// ── Conflict: same name, different signatures → overload resolves ─────────────
+
+//   import std::io  { println }     // fn println(val: any)
+//   import std::log { println }     // fn println(val: str, level: int)
+//
+//   fn demo() {
+//       println("hello")            // → std::io println    (any matches str)
+//       println("hello", 2)         // → std::log println   (str + int)
+//       // println(3.14)            // COMPILE ERROR: ambiguous
+//       io::println(3.14)           // unambiguous qualified form
+//   }
+
+// ── Conflict: same name, same signature → must alias module ───────────────────
+
+//   import std::io   { println }    // fn println(val: any)
+//   import mylib::io { println }    // fn println(val: any) ← identical
+//   // COMPILE ERROR: println has identical signature in both modules
+//   // Fix: import mylib::io as myIo
+//   //      myIo::println("hello")
+
+// ── mod keyword: access module scope when shadowed ────────────────────────────
+
+var appName: str = "MyApp"         // module-level variable
+
+class Config {
+    pub appName: str = "Config"    // instance field — same name
+
+    fn describe() {
+        var appName := "local"     // local — same name again
+
+        io::println(appName)       // "local"          — local wins
+        io::println(self.appName)  // "Config"         — instance field
+        io::println(mod.appName)   // "MyApp"          — module level
+
+        // modify each independently
+        appName      = "new local"
+        self.appName = "new Config"
+        mod.appName  = "new MyApp"
+    }
+}
+
+// mod is reserved — all COMPILE ERRORS:
+// var mod := 42
+// fn mod() { }
+// import std::io as mod
+// for mod in list { }
+// fn f(mod: int) { }
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PASTE AFTER: SECTION 24 — MODULES
+// NEW SECTION: 24-A — NAME RESOLUTION & IMPORT VISIBILITY (code patterns)
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 24-A — NAME RESOLUTION & IMPORT VISIBILITY
+// ──────────────────────────────────────────────────────────────────────────────
+//
+//  NAME LOOKUP ORDER (for a bare identifier):
+//    1. Local scope stack (innermost block outward)
+//    2. Function parameters
+//    3. Lambda capture set
+//    4. Current module top-level (fns, structs, consts, globals in THIS file)
+//    5. Built-in names (true false null self Self super, primitive types)
+//    Bare names NEVER cross module boundaries — always use alias:: prefix.
+//
+//  VISIBILITY LEVELS:
+//    pub      — any file in any module
+//    priv     — this .vex file only
+//    internal — all files in the same project directory (not subdirs)
+//    prot     — this class + subclasses only (class fields/methods only)
+//
+//  RE-EXPORT: no `pub import`. Must wrap explicitly (see below).
+//  ALIAS SCOPE: import aliases are FILE-SCOPED — not inherited by importers.
+//  CONDITIONAL IMPORTS: imports inside #if blocks resolved at comptime.
+
+// ── Visibility modifiers on module-level declarations ────────────────────────
+
+pub struct PublicPoint { pub x: float64, pub y: float64 }    // usable by any importer
+priv struct InternalCache { data: []int }                    // only this file
+internal fn sharedHelper() -> str = "same dir only"          // same project directory
+
+// ── Re-export pattern (no pub import syntax — must wrap) ─────────────────────
+
+// Re-export a type from an imported module under this module's namespace
+pub type Vec2 = Point                              // importers get Vec2 = Point
+
+// Re-export a function as a wrapper
+pub fn mathSqrt(x: float64) -> float64 = math::sqrt(x)
+
+// ── Alias scoping — alias lives only in this file ────────────────────────────
+
+import std::math as m                              // alias `m` is FILE-SCOPED
+// other files that import this module do NOT get the `m` alias
+
+fn aliasDemo() {
+    io::println(m::sqrt(9.0))    // 3.0 — using file-local alias
+    io::println(m::PI)           // 3.14159...
+}
+
+// ── Name resolution: bare name vs qualified name ─────────────────────────────
+
+var moduleLevel: int = 42         // Step 4: resolved as module top-level name
+
+fn nameResolutionShowcase() {
+    var moduleLevel := 99         // Step 1: shadows module-level var in this scope
+    io::println(moduleLevel)      // 99 (local shadow wins)
+
+    {
+        var moduleLevel := 999    // Step 1: shadows again in inner block
+        io::println(moduleLevel)  // 999
+    }
+    io::println(moduleLevel)      // 99 (inner shadow gone, outer local restored)
+
+    // Module-level is inaccessible while shadowed — no disambiguation syntax.
+    // Fix: don't shadow module-level names; use distinct local names.
+
+    // Built-in names (Step 5) — always available
+    let t := true
+    let n: int? = null
+    let sz := sizeof(float64)     // 8 — comptime built-in
+
+    // Cross-module access REQUIRES alias:: prefix (Step 4 does NOT cross modules)
+    io::println(math::PI)         // OK — qualified
+    // io::println(PI)            // COMPILE ERROR: undefined name `PI`
+}
+
+// ── UFCS — Universal Function Call Syntax ────────────────────────────────────
+//
+//  x.f(args)  is equivalent to  f(x, args)  when:
+//    — no instance method `f` exists on x's type
+//    — a free function `f` exists whose first parameter matches x's type
+//  UFCS is tried LAST in method resolution (after direct methods, impl blocks, traits).
+
+fn double(x: int) -> int = x * 2
+fn triple(x: int) -> int = x * 3
+
+fn ufcsDemo() {
+    let a := 5.double()           // UFCS: double(5)  → 10
+    let b := 5.triple()           // UFCS: triple(5)  → 15
+    let c := "hello".wordCount()  // UFCS: wordCount("hello") — defined in impl str above
+    io::println(f"{a} {b} {c}")
+
+    // Chaining via UFCS — clean pipeline style without pipe operator
+    let result := 3.double().triple().double()   // ((3*2)*3)*2 = 36
+    io::println(result)
+}
+
+// ── Conditional platform-specific imports ────────────────────────────────────
+
+#if OS == "linux" {
+    import platform::linux as sys
+} elif OS == "windows" {
+    import platform::windows as sys
+} elif OS == "macos" {
+    import platform::macos as sys
+} else {
+    import platform::generic as sys
+}
+
+// `sys` is available regardless of which platform branch was compiled.
+// The alias is consistent — callers always write sys::fn_name.
+
+fn platformDemo() {
+    io::println(f"platform: {#OS}")
+    // sys::platformSpecificFn()   ← would call the right impl per platform
+}
+
+// ── Import alias conflict resolution ─────────────────────────────────────────
+
+// If two imports share the same last segment, one MUST be aliased.
+// import std::io            ← last segment "io"
+// import myapp::io          ← CONFLICT: also "io" — COMPILE ERROR without alias
+// Fix:
+// import myapp::io as appIo
+//
+// Then:
+//   io::println(...)        ← std io
+//   appIo::someFunction()   ← myapp io
+
+// ── prot visibility (class only) ─────────────────────────────────────────────
+
+class SecureBase {
+    priv secret: str = "hidden"          // this class only
+    prot internalId: str = "base-001"   // this class + subclasses
+
+    pub fn getSecret() -> str = self.secret
+    prot fn protectedOp() -> str = f"op on {self.internalId}"
+}
+
+class SecureChild : SecureBase {
+    init() { super() }
+
+    pub fn childOp() -> str {
+        // self.secret        // COMPILE ERROR: priv field of parent
+        self.internalId       // OK: prot field accessible in subclass
+        self.protectedOp()    // OK: prot method accessible in subclass
+    }
+}
+
+fn protVisDemo() {
+    let b := SecureBase()
+    b.getSecret()              // OK: pub method
+    // b.internalId            // COMPILE ERROR: prot not accessible outside class hierarchy
+    // b.protectedOp()         // COMPILE ERROR: prot not accessible outside class hierarchy
+
+    let c := SecureChild()
+    c.childOp()                // OK: childOp is pub, internally accesses prot members
+}
+
+
+
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 25 — FILE I/O
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn fileDemo() {
+    let content := fs::readFile("data.txt")?
+    let lines   := fs::readLines("data.txt")
+    let bytes   := fs::readBytes("img.png")
+
+    fs::writeFile("out.txt", "hello")?
+    fs::writeBytes("out.bin", [0xFF, 0x00, 0xAB])?
+    fs::appendFile("log.txt", "entry\n")?
+
+    use let f := fs::open("data.txt", "r") {
+        let line := f.readLine()
+        let buf  := f.readBytes(1024)
+        let all  := f.readAll()
+        for line in f.lines() {
+            io::println(line)
+        }
+    }
+
+    use let w := fs::open("output.txt", "w") {
+        w.write("Hello\n")
+        w.write(f"Generated at {time::now()}\n")
+        w.flush()
+    }
+
+    // fs::Path — static methods called as fs::Path.home()  NOT fs::Path::home()
+    let p    := fs::Path("folder/sub/file.txt")
+    let home := fs::Path.home()        // static method — dot on type name
+    let cwd  := fs::Path.cwd()
+    let tmp  := fs::Path.temp()
+
+    p.parent(); p.filename(); p.stem(); p.extension()
+    p.exists(); p.isFile(); p.isDir()
+    p.join("other"); p.absolute()
+
+    fs::mkdir("new_dir")
+    fs::mkdir("deep/nested/path", recursive: true)
+    fs::copy("src.txt", "dst.txt")
+    fs::move("old.txt", "new.txt")
+    fs::delete("unwanted.txt")
+
+    let entries  := fs::listDir(".")
+    let allFiles := fs::walkDir(".", recursive: true)
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 26 — REGEX
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn regexDemo() {
+    let email := regex r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
+    let date  := regex r"(?P<year>\d{4})-(?P<month>\d{2})-(?P<day>\d{2})"
+
+    let pat   := regex::compile(r"\d+")?
+
+    let text  := "alice@example.com and bob@test.org"
+
+    email.test(text)
+    email.find(text)
+    email.findAll(text)
+    email.replace(text, "[REDACTED]")
+    email.replaceAll(text, "[REDACTED]")
+    email.replaceAllWith(text, |m| -> m.group(0).upper())
+
+    if let m = email.find(text) {
+        io::println(m.full())
+        io::println(m.group(1))
+        io::println(m.start())
+        io::println(m.end())
+    }
+
+    if let m = date.find("2024-03-15") {
+        io::println(m.named("year"))
+        io::println(m.named("month"))
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 26 (Regex) in vex_spec_final.vex
+// as SECTION 26-A — std::ffi, std::os, std::text, std::str
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 26-A — std::ffi, std::os, std::text, std::str
+// ──────────────────────────────────────────────────────────────────────────────
+
+import std::os
+
+// ── std::ffi — full API demo ──────────────────────────────────────────────────
+
+extern "C" {
+    fn strlen(s: *byte) -> uint
+    fn toupper(c: int32) -> int32
+}
+
+fn ffiFullDemo() {
+    // withCString — safest: ptr cannot escape the lambda
+    let len := ffi::withCString("hello world", |ptr: *byte| -> {
+        unsafe { strlen(ptr) }
+    })
+    io::println(f"C strlen: {len}")   // 11
+
+    // toCString — when ptr must outlive the lambda
+    let cstr: ^[]byte = ffi::toCString("hello from vex")
+    unsafe {
+        let raw: *byte = cstr.ptr()
+        io::println(f"first byte: {raw[0]}")    // 104 ('h')
+    }
+    // cstr freed when it drops at end of scope
+
+    // fromCString — C string → Vex str (copies data)
+    unsafe {
+        let hello: *byte = "statically allocated".bytes().ptr()
+        let vexStr := ffi::fromCString(hello)
+        io::println(vexStr)
+    }
+
+    // fromCStringLen — known length, no null terminator scan
+    unsafe {
+        let data: *byte = "hello world".bytes().ptr()
+        let s := ffi::fromCStringLen(data, 5)    // copies "hello" (5 bytes)
+        io::println(s)
+    }
+
+    // dlopen — load library at runtime
+    match ffi::dlopen("libm.so.6") {
+        Ok(lib) => {
+            // load function symbol
+            match lib.symbol<fn(float64)->float64>("sqrt") {
+                Ok(mathSqrt) => {
+                    unsafe { io::println(mathSqrt(16.0)) }   // 4.0
+                }
+                Err(e) => io::println(f"symbol not found: {e}")
+            }
+            // lib auto-unloaded (dlclose) when it drops here
+        }
+        Err(e) => io::println(f"dlopen failed: {e}")
+    }
+
+    // syscall — direct OS call (Linux example: getpid = syscall 39)
+    unsafe {
+        let pid := ffi::syscall(39)   // SYS_getpid on Linux x86-64
+        io::println(f"pid via syscall: {pid}")
+    }
+}
+
+// ── std::os — full API demo ───────────────────────────────────────────────────
+
+fn osDemo() {
+    // Platform info
+    io::println(f"platform: {os::platform()}")    // "linux" | "windows" | "macos" ...
+    io::println(f"arch:     {os::arch()}")        // "x86_64" | "arm64" ...
+    io::println(f"cpus:     {os::cpuCount()}")
+    io::println(f"pageSize: {os::pageSize()}")    // 4096 typically
+
+    // Process info
+    io::println(f"pid:  {os::pid()}")
+    io::println(f"ppid: {os::ppid()}")
+    io::println(f"host: {os::hostname() ?? "unknown"}")
+    io::println(f"user: {os::username() ?? "unknown"}")
+
+    // Signal handling
+    os::signal(os::Signal.SIGTERM, |sig| -> {
+        io::println(f"received signal: {sig}")
+        process::exit(0)
+    })
+
+    os::signal(os::Signal.SIGINT, |sig| -> {
+        io::println("Ctrl-C caught — shutting down")
+        process::exit(1)
+    })
+
+    os::ignoreSignal(os::Signal.SIGPIPE)    // ignore broken pipe
+
+    // Resource limits
+    match os::getrlimit(os::RlimitResource.NOFILE) {
+        Ok((soft, hard)) => io::println(f"max open files: soft={soft} hard={hard}")
+        Err(e)           => io::println(f"getrlimit error: {e}")
+    }
+
+    // Comptime platform check — zero-cost, resolves at compile time
+    #if OS == "linux" {
+        io::println("linux-specific code path")
+    } elif OS == "windows" {
+        io::println("windows-specific code path")
+    } else {
+        io::println("other platform")
+    }
+}
+
+// ── std::text — full API demo ─────────────────────────────────────────────────
+
+fn textDemo() {
+    // Locale-aware comparison (for sorting human-readable text)
+    let words := ["banana", "Äpfel", "cherry", "apricot"]
+    let sorted := words.sortBy(|a, b| -> text::collate(a, b))
+    io::println(sorted)    // locale-aware sort order
+
+    // Ordinal comparison (faster, not locale-aware)
+    io::println("cafe" < "café")    // ordinal: 'e'(0x65) < 0xC3(first byte of é)
+
+    // Unicode normalization
+    let nfc  := text::normalize("café", .NFC)    // canonical composed
+    let nfd  := text::normalize("café", .NFD)    // canonical decomposed
+    io::println(nfc.len())   // may differ from nfd.len()
+
+    // Locale-aware case conversion
+    let upper := text::toUpperLocale("straße", "de")   // "STRASSE" (German: ß → SS)
+    io::println(upper)
+
+    // Grapheme clusters (emoji, combining characters)
+    let emoji := "Hello 👋🏽"                         // 👋🏽 = 2 code points (emoji + skin tone)
+    io::println(f"chars: {emoji.charCount()}")        // counts code points: 8
+    let graphemes := text::graphemes(emoji)
+    io::println(f"graphemes: {graphemes.len()}")      // counts user chars: 7
+
+    // Character classification
+    io::println(text::isAlpha('A'))    // true
+    io::println(text::isAlpha('5'))    // false
+    io::println(text::isDigit('9'))    // true
+    io::println(text::isSpace(' '))    // true
+    io::println(text::isUpper('A'))    // true
+    io::println(text::toLower('A'))    // 'a'
+    io::println(text::toUpper('z'))    // 'Z'
+
+    // Encoding conversion
+    let utf16 := text::encode("hello", .UTF16LE)
+    io::println(f"UTF-16LE bytes: {utf16.len()}")   // 10 (5 chars × 2 bytes)
+
+    match text::decode(utf16, .UTF16LE) {
+        Ok(s)  => io::println(f"decoded: {s}")
+        Err(e) => io::println(f"decode error: {e}")
+    }
+
+    let latin1bytes: []byte = [72, 101, 108, 108, 111]  // "Hello" in Latin-1
+    match text::decode(latin1bytes, .Latin1) {
+        Ok(s)  => io::println(s)    // "Hello"
+        Err(e) => io::println(e)
+    }
+}
+
+// ── std::str — full Builder and string method demo ────────────────────────────
+
+fn strFullDemo() {
+    // str::Builder — efficient concatenation (avoid + in loops)
+    var sb := str::Builder()
+    sb.append("Hello")
+    sb.append(", ")
+    sb.append("World")
+    sb.appendChar('!')
+    sb.appendFmt(" Count: {}", 42)    // runtime format
+    io::println(sb.toString())        // "Hello, World! Count: 42"
+    io::println(f"len={sb.len()}")
+
+    sb.clear()                        // reset without freeing allocation
+    for i in 0..5 { sb.append(f"item{i} ") }
+    io::println(sb.toString())        // "item0 item1 item2 item3 item4 "
+
+    // str::join and str::repeat
+    let joined  := str::join(", ", ["one", "two", "three"])   // "one, two, three"
+    let repeated := str::repeat("ab", 3)                      // "ababab"
+    io::println(joined)
+    io::println(repeated)
+
+    // str::format — runtime version of f"..."
+    let s := str::format("x={} y={:.2f}", 10, 3.14)
+    io::println(s)    // "x=10 y=3.14"
+
+    // str methods — complete coverage
+    let txt := "  Hello, World!  "
+    io::println(txt.trim())                   // "Hello, World!"
+    io::println(txt.trimStart())              // "Hello, World!  "
+    io::println(txt.trimEnd())                // "  Hello, World!"
+    io::println(txt.trim().upper())           // "HELLO, WORLD!"
+    io::println(txt.trim().lower())           // "hello, world!"
+    io::println(txt.contains("World"))        // true
+    io::println(txt.startsWith("  Hello"))   // true
+    io::println(txt.endsWith("!  "))          // true
+    io::println(txt.indexOf("World") ?? 0)   // 9 (byte offset)
+    io::println(txt.replace("World", "VEX")) // "  Hello, VEX!  "
+    io::println(txt.replaceAll("l", "L"))    // "  HeLLo, WorLd!  "
+
+    let parts := "a,b,,c".split(",")         // ["a","b","","c"]
+    io::println(parts.len())                  // 4
+    let partsN := "a:b:c:d".splitN(":", 2)  // ["a", "b:c:d"] (max 2 parts)
+    io::println(partsN)
+
+    io::println("hello".padStart(8, ' '))    // "   hello"
+    io::println("hello".padEnd(8, '-'))      // "hello---"
+    io::println("hello".repeated(3))         // "hellohellohello"
+    io::println("racecar".isPalindrome())    // true
+    io::println("hello world".count("l"))    // 3
+    io::println("hello".reversed())          // "olleh"
+
+    // Try-parse
+    io::println("42".toInt() ?? -1)          // 42
+    io::println("abc".toInt() ?? -1)         // -1 (parse failed)
+    io::println("3.14".toFloat() ?? 0.0)     // 3.14
+
+    // lines()
+    let multiline := "line1\nline2\r\nline3"
+    for l in multiline.lines() { io::println(l) }
+
+    // isAscii
+    io::println("hello".isAscii())           // true
+    io::println("café".isAscii())            // false
+
+    // UTF-8 aware operations
+    let utf8 := "café"
+    io::println(utf8.len())                  // 5 bytes ('é' = 2 bytes in UTF-8)
+    io::println(utf8.charCount())            // 4 codepoints
+    io::println(utf8.charAt(3))             // 'é' (codepoint index 3)
+    io::println(utf8.charSlice(0, 3))       // "caf" (first 3 codepoints)
+
+    // Iterate bytes vs codepoints
+    var byteCount := 0
+    for _ in utf8 { byteCount++ }           // iterates bytes
+    var charCount := 0
+    for _ in utf8.chars() { charCount++ }   // iterates codepoints
+    io::println(f"bytes={byteCount} chars={charCount}")  // 5  4
+}
+
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 27 — MAIN DEMO
+// ──────────────────────────────────────────────────────────────────────────────
+
+fn main() {
+    io::println("═══════════════════════════════════")
+    io::println("   VEX LANGUAGE v4.0 — FULL DEMO   ")
+    io::println("═══════════════════════════════════\n")
+
+    // ── Variables & types ─────────────────────────────────────────────────────
+    var x, y := 10, 20
+    x, y = y, x
+    io::println(f"swap: x={x} y={y}")
+
+    let maybe: int? = 42
+    let safe := maybe ?? 0
+    io::println(f"nullable: {maybe} safe={safe}")
+
+    // ── Integer overflow ──────────────────────────────────────────────────────
+    var small: int8 = 100
+    io::println(f"wrapping 100i8 +% 50 = {small +% 50}")     // -106
+    io::println(f"saturating 100i8 +| 50 = {small +| 50}")   // 127
+
+    // ── Functions ─────────────────────────────────────────────────────────────
+    io::println(f"add(3,4)      = {add(3, 4)}")
+    io::println(f"square(7)     = {square(7)}")
+    io::println(f"maxOf(3,9)    = {maxOf(3, 9)}")
+    io::println(f"10! comptime  = {FACT_10}")
+    io::println(f"10! runtime   = {factorial(10)}")
+
+    let (q, r) := divmod(17, 5)
+    io::println(f"17÷5 = {q} rem {r}")
+
+    let add5 := adder(5)
+    io::println(f"adder(5)(37) = {add5(37)}")
+
+    // ── Lambdas ───────────────────────────────────────────────────────────────
+    let nums := [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    let lambdaResult := nums
+        .filter(|n| -> n % 2 == 0)
+        .map(|n| -> n * n)
+        .reduce(0, |acc, n| -> acc + n)
+    io::println(f"sum of even squares: {lambdaResult}")
+
+    // ── Strings (UTF-8 aware) ─────────────────────────────────────────────────
+    let utf8str := "café"
+    io::println(f"bytes={utf8str.len()} chars={utf8str.charCount()}")
+    io::println(f"charAt(3) = {utf8str.charAt(3)}")            // 'é'
+    let charSliced := utf8str.charSlice(0, 3)
+    io::println(f"charSlice(0,3) = {charSliced}")              // "caf"
+
+    // ── Pipe with type-name dot (RULE SYM5) ──────────────────────────────────
+    // str is a type name here; dot is correct (CALL4 step 2)
+    let piped := "  hello world  " |> str.trim |> str.upper
+    io::println(f"piped: {piped}")
+
+    // ── Structs ───────────────────────────────────────────────────────────────
+    let p1 := Point { x: 3.0, y: 4.0 }
+    let p2 := Point { x: 1.0, y: 2.0 }
+    let p3 := p1 + p2
+    io::println(f"p1={p1}")
+    io::println(f"p1+p2={p3}")
+    io::println(f"|p1|={p1.magnitude:.4f}")
+    io::println(f"Point.origin()={Point.origin()}")
+
+    // Static field via type name
+    io::println(f"Point.instanceCount={Point.instanceCount}")
+
+    // ── User struct (used in async demos) ─────────────────────────────────────
+    let u := User("Alice", 30)
+    io::println(u.greet())
+    io::println(f"User.maxAge()={User.maxAge()}")
+
+    // ── Classes & inheritance ─────────────────────────────────────────────────
+    let animals: []Animal = [
+        Dog("Rex", "German Shepherd"),
+        GuideDog("Buddy", "Labrador", "Alice"),
+    ]
+    for a in animals {
+        io::println(a.speak())
+        io::println(f"  identity: {a.identity()}")
+    }
+    io::println(f"Animal.count={Animal.count}")
+
+    // ── Generics ──────────────────────────────────────────────────────────────
+    let box1 := Box(42)
+    let box2 := box1.map(|n| -> f"value={n}")
+    io::println(f"box1={box1}, box2={box2}")
+
+    var sv := SortedVec<int>()
+    sv.push(5); sv.push(1); sv.push(3); sv.push(2); sv.push(4)
+    io::println(f"sorted min={sv.min()} max={sv.max()}")
+
+    // ── Distinct types ────────────────────────────────────────────────────────
+    let oid := OrderId(42)
+    let uid := UserId(42)
+    io::println(f"OrderId rawValue={oid.rawValue}")
+    // oid == uid  would be a COMPILE ERROR — different distinct types
+    io::println(f"OrderId == OrderId(42): {oid == OrderId(42)}")
+
+    // ── Enums with data ───────────────────────────────────────────────────────
+    let exprs: []Expr = [
+        Expr.Num(5.0),
+        Expr.Add(mem::new(Expr.Num(2.0)), mem::new(Expr.Num(3.0))),
+        Expr.Mul(mem::new(Expr.Num(4.0)), mem::new(Expr.Num(3.0))),
+    ]
+    let env: [str:float64] = ["x": 10.0, "y": 5.0]
+    for e in exprs {
+        io::println(f"{e.toString()} = {e.eval(env)}")
+    }
+
+    let colors: []Color = [Color.Red, Color.Green, Color.Custom(128, 0, 255)]
+    for c in colors { io::println(c.toHex()) }
+
+    // ── Error handling ────────────────────────────────────────────────────────
+    match parseInt("42") {
+        Ok(n)  => io::println(f"parsed: {n}")
+        Err(e) => io::println(f"error: {e}")
+    }
+    match parseInt("abc") {
+        Ok(n)  => io::println(f"parsed: {n}")
+        Err(e) => io::println(f"error: {e}")
+    }
+
+    // ── Pattern matching ──────────────────────────────────────────────────────
+    for v: any in [42, "hello", 3.14, true, [1,2,3]] {
+        let descAny := match v {
+            as int i    => f"int: {i}"
+            as str s    => f"str len={s.len()}: {s}"
+            as float f  => f"float: {f:.2f}"
+            as bool b   => f"bool: {b}"
+            as []int a  => f"[]int len={a.len()}"
+            _           => "unknown"
+        }
+        io::println(descAny)
+    }
+
+    // ── Collections ───────────────────────────────────────────────────────────
+    var scoreMap: [str:int] = ["Alice": 95, "Bob": 87, "Carol": 92]
+    // Map iteration order is unspecified (COL2) — sort explicitly if needed
+    for name, score in scoreMap.entries().sortBy(|(k1,_), (k2,_)| -> k1.compareTo(k2)) {
+        io::println(f"  {name}: {score}")
+    }
+
+    let top := scoreMap.entries()
+        .filter(|(_, v)| -> v >= 90)
+        .map(|(k, _)| -> k)
+    io::println(f"top scorers: {top}")
+
+    // ── Sequence generator (renamed from range to avoid conflict with 0..N) ───
+    var seqResults: []int = []
+    for n in sequence(0, 30, 3) {
+        seqResults.append(n)
+    }
+    io::println(f"sequence(0,30,3): {seqResults}")
+
+    // ── Comptime ─────────────────────────────────────────────────────────────
+    io::println(f"10! = {FACT_10}")
+    io::println(f"Platform: {PLATFORM}")
+    io::println(f"64-bit: {IS_64BIT}")
+    io::println(f"Vec3(1,2,3) sum = {VEC_SUM}")
+
+    // ── Concurrency ───────────────────────────────────────────────────────────
+    let (sender, receiver) := channel::channel<int>(10)
+    thread::spawn(move || -> {
+        for i in 0..5 { sender.push(i * i) }
+        sender.close()
+    })
+    var chResults: []int = []
+    for v in receiver { chResults.append(v) }
+    io::println(f"channel squares: {chResults}")
+
+    // ── Memory ────────────────────────────────────────────────────────────────
+    var num := 100
+    let ptr  := &mut num
+    *ptr = 999
+    io::println(f"via pointer: {num}")
+
+    var heap: ^str = mem::new("heap string")
+    io::println(f"heap: {*heap}")
+    // heap freed automatically at scope end
+
+    io::println("\n══════════════════════════════════════════════")
+    io::println("  VEX v4.0 COMPLETE — All systems working!")
+    io::println("══════════════════════════════════════════════")
+}
+
+// ════════════════════════════════════════════════════════════════════════════════
+// [SPEC FILE] — paste after SECTION 27 (Main Demo) in vex_spec_final.vex
+// as SECTION 28 — STANDARD LIBRARY CORE DEMO
+// ════════════════════════════════════════════════════════════════════════════════
+
+// ──────────────────────────────────────────────────────────────────────────────
+// SECTION 28 — STANDARD LIBRARY CORE
+// ──────────────────────────────────────────────────────────────────────────────
+
+import std::time
+import std::process
+import std::json
+
+// ── std::io — full API ────────────────────────────────────────────────────────
+
+fn ioDemo() {
+    // Basic output
+    io::println("hello")             // stdout + newline
+    io::print("no newline")         // stdout, no newline
+    io::printErr("to stderr")       // stderr + newline
+    io::flush()                      // flush stdout buffer
+
+    // Named handles
+    let out := io::stdout()
+    out.writeLn("via Writer handle")
+    out.flush()
+
+    let err := io::stderr()
+    err.writeLn("error message")
+
+    // stdin reading
+    let line := io::readLine()       // str? — null on EOF
+    if let l = line {
+        io::println(f"you typed: {l}")
+    }
+
+    let all := io::readAll()         // read everything from stdin
+    io::println(f"total stdin bytes: {all.len()}")
+}
+
+// ── std::math — full API ──────────────────────────────────────────────────────
+
+fn mathDemo() {
+    // Constants
+    io::println(f"PI  = {math::PI}")
+    io::println(f"E   = {math::E}")
+    io::println(f"TAU = {math::TAU}")
+
+    // Basic functions
+    io::println(math::sqrt(2.0))        // 1.4142...
+    io::println(math::cbrt(27.0))       // 3.0
+    io::println(math::abs(-42.0))       // 42.0
+    io::println(math::abs(-42))         // 42 (int overload)
+    io::println(math::floor(3.7))       // 3.0
+    io::println(math::ceil(3.2))        // 4.0
+    io::println(math::round(2.5))       // 2.0 (banker's rounding: half-to-even)
+    io::println(math::round(3.5))       // 4.0
+    io::println(math::trunc(-3.9))      // -3.0
+
+    // Trig
+    io::println(math::sin(math::PI / 2.0))   // 1.0
+    io::println(math::cos(0.0))              // 1.0
+    io::println(math::atan2(1.0, 1.0))       // PI/4
+
+    // Exp / log
+    io::println(math::exp(1.0))         // E
+    io::println(math::log(math::E))     // 1.0
+    io::println(math::log2(8.0))        // 3.0
+    io::println(math::log10(1000.0))    // 3.0
+    io::println(math::pow(2.0, 10.0))   // 1024.0
+
+    // Min / max / clamp
+    io::println(math::min(3, 7))        // 3
+    io::println(math::max(3.0, 7.0))    // 7.0
+    io::println(math::clamp(15, 0, 10)) // 10
+
+    // Number theory
+    io::println(math::gcd(48, 36))      // 12
+    io::println(math::lcm(4, 6))        // 12
+
+    // Special value checks
+    io::println(math::isNaN(math::NAN))         // true
+    io::println(math::isInf(math::INF))         // true
+    io::println(math::isFinite(42.0))           // true
+    io::println(math::hypot(3.0, 4.0))          // 5.0
+    io::println(math::lerp(0.0, 10.0, 0.3))     // 3.0
+}
+
+// ── std::mem — full API ───────────────────────────────────────────────────────
+
+fn memDemo() {
+    // Owned heap
+    var h: ^int = mem::new(42)
+    io::println(*h)              // 42
+    *h = 99
+    io::println(*h)              // 99
+    // h freed at scope exit
+
+    // Shared heap (ARC)
+    var s: ~str = mem::share("shared text")
+    var s2 := s.clone()          // refcount = 2
+    io::println(*s == *s2)       // true
+
+    // Convert owned to shared
+    var o: ^str = mem::new("to be shared")
+    var shared: ~str = mem::intoShared(move o)   // o is now invalid
+
+    // Raw allocation (unsafe)
+    unsafe {
+        let raw: *byte = mem::alloc(256)
+        mem::zero(raw, 256)
+        raw[0] = 0xFF
+        io::println(raw[0])     // 255
+        mem::free(raw)
+    }
+
+    // Arena: fast scoped allocation
+    {
+        let arena := mem::Arena(4096)
+        unsafe {
+            let a: *int64 = arena.alloc<int64>()
+            let b: *float64 = arena.alloc<float64>()
+            *a = 123
+            *b = 4.56
+            io::println(f"arena values: {*a} {*b}")
+        }
+        // arena freed here — one O(1) deallocation for everything inside
+    }
+
+    // mem::asBytes — view struct as raw bytes
+    struct Header { magic: uint32, version: uint16, flags: uint16 }
+    let hdr := Header { magic: 0xDEADBEEF, version: 1, flags: 0 }
+    let bytes := mem::asBytes(hdr)  // []byte view, 8 bytes
+    io::println(f"header bytes: {bytes.len()}")
+}
+
+// ── std::time — full API ──────────────────────────────────────────────────────
+
+fn timeDemo() {
+    // Instant — monotonic clock
+    let start := time::now()
+    thread::sleep(10ms)
+    let elapsed := start.elapsed()
+    io::println(f"elapsed: {elapsed.totalMs()}ms")
+
+    // Instant arithmetic
+    let future := start + 5s
+    let diff    := future - start
+    io::println(f"diff: {diff.totalSecs():.1f}s")
+
+    // Duration construction
+    let d1 := time::Duration.fromMs(1500)
+    let d2 := 2s                        // duration literal
+    let d3 := d1 + d2                   // 3500ms
+    let d4 := d3 * 2.0                  // 7000ms
+    io::println(f"d4 = {d4.totalMs()}ms")
+
+    // Format / parse
+    let formatted := time::format(start, "%Y-%m-%d %H:%M:%S")
+    io::println(formatted)
+
+    match time::parse("2024-01-15 09:30:00", "%Y-%m-%d %H:%M:%S") {
+        Ok(t)  => io::println(f"parsed: {time::format(t, \"%Y\")}")
+        Err(e) => io::println(f"parse error: {e}")
+    }
+}
+
+// ── std::process — full API ───────────────────────────────────────────────────
+
+fn processDemo() {
+    // Command-line arguments
+    let args := process::args()
+    io::println(f"program: {args[0]}")
+    for i, arg in args { io::println(f"arg[{i}] = {arg}") }
+
+    // Environment variables
+    let home := process::env("HOME") ?? "/tmp"
+    io::println(f"HOME = {home}")
+    process::setEnv("MY_VAR", "hello")
+    io::println(process::env("MY_VAR") ?? "not set")
+
+    // Run child process
+    match process::exec("ls", ["-la", "/tmp"]) {
+        Ok(status) => io::println(f"exit code: {status.code}")
+        Err(e)     => io::println(f"exec failed: {e}")
+    }
+
+    // process::exit terminates immediately — deinit() does NOT run
+    // process::exit(0)
+}
+
+// ── std::json — full API ──────────────────────────────────────────────────────
+
+struct Person { name: str, age: int, email: str? }
+
+fn jsonDemo() {
+    // marshal: struct → JSON string
+    let p := Person { name: "Alice", age: 30, email: "alice@example.com" }
+    match json::marshal(p) {
+        Ok(s)  => io::println(s)
+        Err(e) => io::println(f"marshal error: {e}")
+    }
+
+    // unmarshal: JSON string → struct
+    let raw := "{\"name\":\"Bob\",\"age\":25,\"email\":null}"
+    match json::unmarshal<Person>(raw) {
+        Ok(person) => io::println(f"name={person.name} age={person.age}")
+        Err(e)     => io::println(f"unmarshal error: {e}")
+    }
+
+    // parse: JSON → JsonValue (dynamic)
+    match json::parse(raw) {
+        Ok(v) => match v {
+            json::JsonValue.Object(obj) => {
+                let name := obj["name"]
+                match name {
+                    json::JsonValue.Str(s) => io::println(f"name = {s}")
+                    _                      => io::println("unexpected type")
+                }
+            }
+            _ => io::println("expected object")
+        }
+        Err(e) => io::println(f"parse error: {e}")
+    }
+
+    // stringify: JsonValue → string
+    let arr := json::JsonValue.Array([
+        json::JsonValue.Int(1),
+        json::JsonValue.Str("hello"),
+        json::JsonValue.Bool(true),
+    ])
+    io::println(json::stringify(arr, pretty: false))    // [1,"hello",true]
+    io::println(json::stringify(arr, pretty: true))     // formatted
+}
+
+// ── std::collections — full API ───────────────────────────────────────────────
+
+fn collectionsFullDemo() {
+    // Queue (FIFO)
+    var q: collections::Queue<int> = collections::Queue()
+    q.push(1); q.push(2); q.push(3)
+    io::println(q.peek() ?? -1)     // 1 (front, not removed)
+    io::println(q.pop()  ?? -1)     // 1 (removed)
+    io::println(q.len())            // 2
+
+    // Stack (LIFO)
+    var s: collections::Stack<str> = collections::Stack()
+    s.push("a"); s.push("b"); s.push("c")
+    io::println(s.pop() ?? "")      // "c"
+    io::println(s.peek() ?? "")     // "b"
+
+    // Deque (double-ended)
+    var d: collections::Deque<int> = collections::Deque()
+    d.pushFront(1); d.pushBack(2); d.pushFront(0)
+    io::println(d.popFront() ?? -1)   // 0
+    io::println(d.popBack()  ?? -1)   // 2
+
+    // PriorityQueue (min-heap)
+    var pq: collections::PriorityQueue<int> = collections::PriorityQueue()
+    pq.push(5); pq.push(1); pq.push(3); pq.push(2)
+    io::println(pq.pop() ?? -1)    // 1 (smallest)
+    io::println(pq.pop() ?? -1)    // 2
+
+    // Max-heap via custom comparator
+    var pqMax: collections::PriorityQueue<int> = collections::PriorityQueue(|a, b| -> b - a)
+    pqMax.push(5); pqMax.push(1); pqMax.push(3)
+    io::println(pqMax.pop() ?? -1)  // 5 (largest)
+
+    // OrderedMap (insertion-order iteration — COL3)
+    var om: collections::OrderedMap<str, int> = collections::OrderedMap()
+    om.set("banana", 2); om.set("apple", 1); om.set("cherry", 3)
+    for k, v in om {
+        io::println(f"{k}: {v}")    // banana, apple, cherry (insertion order)
+    }
+    io::println(om.get("apple") ?? 0)   // 1
+
+    // SortedSet (ascending-order iteration — COL4)
+    var ss: collections::SortedSet<int> = collections::SortedSet()
+    ss.add(5); ss.add(1); ss.add(3); ss.add(2); ss.add(4)
+    for v in ss {
+        io::print(f"{v} ")          // 1 2 3 4 5 (ascending)
+    }
+    io::println(f"min={ss.min() ?? 0} max={ss.max() ?? 0}")
+}
+
+// ── std::crypto — full API ────────────────────────────────────────────────────
+
+import std::crypto
+
+fn cryptoDemo() {
+    let data := "hello world".bytes()
+
+    // Hashing
+    let sha256hash := crypto::sha256(data)
+    let sha512hash := crypto::sha512(data)
+    let blake3hash := crypto::blake3(data)
+    io::println(f"sha256: {sha256hash.len()} bytes")  // 32
+    io::println(f"sha512: {sha512hash.len()} bytes")  // 64
+    io::println(f"blake3: {blake3hash.len()} bytes")  // 32
+
+    // HMAC
+    let key  := "secret-key".bytes()
+    let hmac := crypto::hmacSha256(key, data)
+    io::println(f"hmac: {hmac.len()} bytes")           // 32
+
+    // Secure random bytes
+    let rng := crypto::randomBytes(32)
+    io::println(f"random: {rng.len()} bytes")
+
+    // Constant-time comparison (side-channel safe)
+    let match_ := crypto::constantTimeEq(sha256hash, sha256hash)
+    io::println(f"match: {match_}")   // true
+
+    // AES-256-GCM encryption
+    let aesKey: [32]byte = crypto::randomBytes(32)  // as [32]byte
+    let nonce:  [12]byte = crypto::randomBytes(12)  // as [12]byte
+    let aes := crypto::Aes256Gcm(aesKey)
+
+    let plaintext  := "secret message".bytes()
+    let ciphertext := aes.encrypt(nonce, plaintext)
+    io::println(f"encrypted: {ciphertext.len()} bytes")
+
+    match aes.decrypt(nonce, ciphertext) {
+        Ok(decrypted) => io::println(str(decrypted) ?? "invalid utf8")
+        Err(e)        => io::println(f"decrypt failed: {e}")
+    }
+}
