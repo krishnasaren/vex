@@ -1,1 +1,11 @@
 # cmake/toolchains/macos-arm64.cmake
+set(CMAKE_SYSTEM_NAME Darwin)
+set(CMAKE_SYSTEM_PROCESSOR arm64)
+set(CMAKE_OSX_ARCHITECTURES arm64)
+set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0" CACHE STRING "Minimum macOS version")
+
+find_program(CMAKE_C_COMPILER   NAMES clang)
+find_program(CMAKE_CXX_COMPILER NAMES clang++)
+
+set(CMAKE_C_FLAGS_RELEASE   "-O2 -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")

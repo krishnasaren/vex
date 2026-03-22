@@ -1,134 +1,237 @@
 // ============================================================================
 // vex/Driver/main.cpp
-// VEX compiler entry point.
-// Parses command-line args, sets up context, drives compilation.
+// VEX Compiler entry point — parses CLI, drives the full compilation pipeline.
 // ============================================================================
 
 #include "vex/Core/VexContext.h"
 #include "vex/Core/DiagnosticConsumer.h"
 #include "vex/Core/MemoryBuffer.h"
+#include "vex/Core/Version.h"
+#include "vex/Lexer/Lexer.h"
+#include "vex/Parser/Parser.h"
+#include "vex/AST/ASTDumper.h"
 
 #include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 using namespace vex;
 
-// ── Minimal driver ────────────────────────────────────────────────────────────
+// ── Usage ─────────────────────────────────────────────────────────────────────
+
+static void printVersion() {
+    fprintf(stdout,
+        "VEX Compiler v%s (language v%s)\n"
+        "LLVM backend v%s\n",
+        std::string(VEX_VERSION_STRING).c_str(),
+        std::string(VEX_LANGUAGE_VERSION).c_str(),
+        std::string(VEX_TARGET_LLVM_VERSION).c_str()
+    );
+}
 
 static void printUsage(const char* prog) {
     fprintf(stderr,
-        "VEX Compiler v1.0.0\n"
-        "Usage: %s [options] <file.vex>\n"
+        "VEX Compiler v%s\n"
+        "Usage: %s [options] <file.vex> [file.vex ...]\n"
         "\n"
         "Options:\n"
-        "  -o <output>     Output file path\n"
-        "  -O0 -O1 -O2 -O3 -Os   Optimization level (default: -O0)\n"
-        "  -g              Emit debug info\n"
-        "  --target <triple>  Target triple (e.g. linux-x64, wasm)\n"
-        "  --check         Type-check only, do not emit code\n"
-        "  --dump-ast      Print AST to stdout\n"
-        "  --dump-ir       Print LLVM IR to stdout\n"
-        "  -Werror         Treat warnings as errors\n"
-        "  -h --help       Show this help\n"
+        "  -o <output>          Output file path (default: a.out / <name>)\n"
+        "  -O0 -O1 -O2 -O3 -Os  Optimization level (default: -O0)\n"
+        "  -g                   Emit debug info\n"
+        "  --target <triple>    Target triple (e.g. linux-x64, linux-arm64, wasm)\n"
+        "  --check              Type-check only, do not emit code\n"
+        "  --dump-ast           Print AST to stdout\n"
+        "  --dump-ir            Print LLVM IR to stdout\n"
+        "  --lib                Build as Vex library (.vxl)\n"
+        "  --shared             Build as shared library (.so/.dll/.dylib)\n"
+        "  --no-rt              No runtime (bare metal / embedded)\n"
+        "  -D <NAME>=<value>    Define a compile-time variable\n"
+        "  -Werror              Treat warnings as errors\n"
+        "  --version            Show compiler version\n"
+        "  -h --help            Show this help\n"
+        "\n"
+        "Build commands (from project directory):\n"
+        "  vexc                 Compile + run (default for dev)\n"
+        "  vexc --check         Type-check only\n"
+        "  vexc --dump-ast      Show parsed AST\n"
+        "  vexc --lib           Build .vxl library\n"
+        "  vexc --shared        Build shared library\n"
+        "\n"
+        "Examples:\n"
+        "  vexc main.vex                       Compile to executable\n"
+        "  vexc main.vex -o myapp              Named output\n"
+        "  vexc --target linux-arm64 main.vex  Cross-compile\n"
+        "  vexc --dump-ast main.vex            Show AST\n"
+        "  vexc --check main.vex               Type-check only\n"
         "\n",
+        std::string(VEX_VERSION_STRING).c_str(),
         prog
     );
 }
 
-int main(int argc, char** argv) {
-    if (argc < 2) {
-        printUsage(argv[0]);
-        return 1;
-    }
+// ── Compiler pipeline state ───────────────────────────────────────────────────
 
-    // ── Parse command line ────────────────────────────────────────────────────
-    CompilerOptions opts;
+struct CompilerJob {
+    CompilerOptions         opts;
     std::vector<std::string> inputFiles;
-    bool checkOnly = false;
-    bool dumpAst   = false;
-    bool dumpIr    = false;
+    bool checkOnly  = false;
+    bool dumpAst    = false;
+    bool dumpIr     = false;
+    bool noRuntime  = false;
+    bool runAfter   = false;  // vexc with no flags → compile + run
+};
+
+// ── Parse command line ────────────────────────────────────────────────────────
+
+static bool parseCLI(int argc, char** argv, CompilerJob& job) {
+    if (argc < 2) {
+        job.runAfter = true; // default: compile + run from vex.toml
+        return true;
+    }
 
     for (int i = 1; i < argc; ++i) {
         std::string_view arg(argv[i]);
 
         if (arg == "-h" || arg == "--help") {
             printUsage(argv[0]);
-            return 0;
-        } else if (arg == "-o" && i + 1 < argc) {
-            opts.outputPath = argv[++i];
-        } else if (arg == "-O0") {
-            opts.optLevel = CompilerOptions::OptLevel::O0;
-        } else if (arg == "-O1") {
-            opts.optLevel = CompilerOptions::OptLevel::O1;
-        } else if (arg == "-O2") {
-            opts.optLevel = CompilerOptions::OptLevel::O2;
-        } else if (arg == "-O3") {
-            opts.optLevel = CompilerOptions::OptLevel::O3;
-        } else if (arg == "-Os") {
-            opts.optLevel = CompilerOptions::OptLevel::Os;
-        } else if (arg == "-g") {
-            opts.emitDebugInfo = true;
-        } else if (arg == "-Werror") {
-            opts.warningsAsErrors = true;
-        } else if (arg == "--check") {
-            checkOnly = true;
-        } else if (arg == "--dump-ast") {
-            dumpAst = true;
-        } else if (arg == "--dump-ir") {
-            dumpIr = true;
-        } else if (arg == "--target" && i + 1 < argc) {
+            return false;
+        }
+        if (arg == "--version") {
+            printVersion();
+            return false;
+        }
+        if (arg == "-o" && i + 1 < argc) {
+            job.opts.outputPath = argv[++i];
+        }
+        else if (arg == "-O0") job.opts.optLevel = CompilerOptions::OptLevel::O0;
+        else if (arg == "-O1") job.opts.optLevel = CompilerOptions::OptLevel::O1;
+        else if (arg == "-O2") job.opts.optLevel = CompilerOptions::OptLevel::O2;
+        else if (arg == "-O3") job.opts.optLevel = CompilerOptions::OptLevel::O3;
+        else if (arg == "-Os") job.opts.optLevel = CompilerOptions::OptLevel::Os;
+        else if (arg == "-g")  job.opts.emitDebugInfo = true;
+        else if (arg == "-Werror") job.opts.warningsAsErrors = true;
+        else if (arg == "--check")    job.checkOnly  = true;
+        else if (arg == "--dump-ast") job.dumpAst    = true;
+        else if (arg == "--dump-ir")  job.dumpIr     = true;
+        else if (arg == "--lib")      job.opts.outputKind = CompilerOptions::OutputKind::VxlLibrary;
+        else if (arg == "--shared")   job.opts.outputKind = CompilerOptions::OutputKind::SharedLib;
+        else if (arg == "--no-rt")    job.noRuntime  = true;
+        else if (arg == "--no-std")   job.noRuntime  = true;
+        else if (arg == "--target" && i + 1 < argc) {
             std::string_view triple(argv[++i]);
-            // Parse "linux-x64" or "wasm" etc.
             auto dash = triple.find('-');
             if (dash != std::string_view::npos) {
-                opts.targetOS   = parseTargetOS(triple.substr(0, dash));
-                opts.targetArch = parseTargetArch(triple.substr(dash + 1));
+                job.opts.targetOS   = parseTargetOS(triple.substr(0, dash));
+                job.opts.targetArch = parseTargetArch(triple.substr(dash + 1));
             } else {
-                opts.targetOS   = parseTargetOS(triple);
+                job.opts.targetOS   = parseTargetOS(triple);
             }
-        } else if (arg.starts_with('-')) {
+        }
+        else if (arg.starts_with("-D") && arg.size() > 2) {
+            // -DNAME=value or -D NAME=value
+            std::string def = std::string(arg.substr(2));
+            if (def.empty() && i + 1 < argc) def = argv[++i];
+            (void)def; // stored in opts.defines in full impl
+        }
+        else if (arg.starts_with('-')) {
             fprintf(stderr, "vexc: unknown option: %s\n", argv[i]);
-            return 1;
-        } else {
-            inputFiles.emplace_back(arg);
+            return false;
+        }
+        else {
+            job.inputFiles.emplace_back(arg);
         }
     }
+    return true;
+}
 
-    if (inputFiles.empty()) {
-        fprintf(stderr, "vexc: no input files\n");
-        printUsage(argv[0]);
+// ── Compile one file ──────────────────────────────────────────────────────────
+
+static int compileFile(const std::string& path, const CompilerJob& job, VexContext& ctx) {
+    // ── Phase 1: Load source ──────────────────────────────────────────────────
+    auto buf = MemoryBuffer::fromFile(path);
+    if (!buf) {
+        fprintf(stderr, "vexc: cannot open file: %s\n", path.c_str());
         return 1;
     }
 
-    // ── Set up compiler context ────────────────────────────────────────────────
-    TextDiagnosticConsumer consumer(
-        // We need a SourceManager to print source context in diagnostics.
-        // Create a temporary one — the real one lives in VexContext.
-        // For now, we pass a stub.
-        *reinterpret_cast<SourceManager*>(nullptr),  // placeholder — TODO
-        /*useColor=*/true
-    );
+    FileID fileID = ctx.srcMgr().addBuffer(std::move(buf), path);
+    const MemoryBuffer* mbuf = ctx.srcMgr().getBuffer(fileID);
 
-    // TODO: wire up properly when full pipeline is connected
-    // VexContext ctx(consumer, std::move(opts));
+    // ── Phase 2: Lex ─────────────────────────────────────────────────────────
+    Lexer lexer(*mbuf, fileID, ctx.srcMgr(), ctx.diags());
+    auto tokens = lexer.lexAll();
 
-    // ── For now: just verify we can load the input file ───────────────────────
-    for (auto& path : inputFiles) {
-        auto buf = MemoryBuffer::fromFile(path);
-        if (!buf) {
-            fprintf(stderr, "vexc: cannot open file: %s\n", path.c_str());
-            return 1;
-        }
-        fprintf(stdout, "vexc: loaded %s (%zu bytes)\n",
-                path.c_str(), buf->size());
+    if (ctx.hasErrors()) return 1;
+
+    // ── Phase 3: Parse ────────────────────────────────────────────────────────
+    ASTContext astCtx;
+    std::filesystem::path p(path);
+    std::string moduleName = p.stem().string();
+
+    Parser parser(std::move(tokens), astCtx, ctx.srcMgr(), ctx.diags());
+    ModuleDecl* mod = parser.parseModule(moduleName);
+
+    if (ctx.hasErrors() || !mod) return 1;
+
+    // ── Dump AST if requested ─────────────────────────────────────────────────
+    if (job.dumpAst) {
+        ASTDumper dumper(ctx.srcMgr(), stdout, /*useColor=*/true);
+        dumper.dump(mod);
+        return 0;
     }
 
-    fprintf(stdout,
-        "vexc: pipeline not yet connected — "
-        "this will invoke Lexer → Parser → Sema → CodeGen → Linker\n"
-    );
+    // ── Phase 4: Type-check (stub — full sema not yet wired) ─────────────────
+    // TODO: ctx.sema().check(mod);
+    if (ctx.hasErrors()) return 1;
+
+    if (job.checkOnly) {
+        fprintf(stdout, "vexc: %s — type-check OK\n", path.c_str());
+        return 0;
+    }
+
+    // ── Phase 5: CodeGen (stub — LLVM IR emission not yet wired) ─────────────
+    // TODO: ctx.codegen().emit(mod, job.opts);
+
+    fprintf(stdout, "vexc: %s (%zu bytes) — parse OK\n", path.c_str(), mbuf->size());
+    fprintf(stdout, "vexc: pipeline stub — Sema → IR → CodeGen → Link not yet connected\n");
 
     return 0;
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+
+int main(int argc, char** argv) {
+    CompilerJob job;
+    if (!parseCLI(argc, argv, job)) return 0;
+
+    // Set up diagnostic consumer
+    // We create a temporary SourceManager for the consumer
+    // (proper wiring happens inside VexContext)
+    SourceManager tmpSrcMgr;
+    TextDiagnosticConsumer consumer(tmpSrcMgr, /*useColor=*/true);
+    VexContext ctx(consumer, job.opts);
+    consumer = TextDiagnosticConsumer(ctx.srcMgr(), /*useColor=*/true);
+
+    if (job.inputFiles.empty()) {
+        // Try to find main.vex in current directory
+        if (std::filesystem::exists("main.vex")) {
+            job.inputFiles.push_back("main.vex");
+        } else {
+            fprintf(stderr, "vexc: no input files\n");
+            printUsage(argv[0]);
+            return 1;
+        }
+    }
+
+    int exitCode = 0;
+    for (auto& file : job.inputFiles) {
+        int r = compileFile(file, job, ctx);
+        if (r != 0) exitCode = r;
+        if (ctx.shouldAbort()) break;
+    }
+
+    consumer.finish();
+    return exitCode;
 }

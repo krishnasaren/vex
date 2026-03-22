@@ -1,2 +1,8 @@
 #pragma once
-// runtime/include/vex_rt/stackguard.h
+#ifdef __cplusplus
+extern "C" {
+#endif
+void vex_stackguard_init(void);
+#ifdef __cplusplus
+}
+#endif
