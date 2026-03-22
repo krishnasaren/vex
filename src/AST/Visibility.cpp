@@ -19,28 +19,11 @@ std::string_view visibilityName(Visibility vis) {
 
 Visibility defaultVisibility(DeclContext ctx) {
     switch (ctx) {
-        // RULE VIS1: Module-level fn/struct/class/enum/trait/const → pub
-        //            Module-level var (global) → priv
-        case DeclContext::ModuleLevel:
-            return Visibility::Pub;
-
-        // RULE VIS1: struct field → pub
-        case DeclContext::StructMember:
-            return Visibility::Pub;
-
-        // RULE VIS1: class field → priv, class method → pub
-        // Note: caller must distinguish field vs method.
-        // This returns priv as the more restrictive default for class context.
-        case DeclContext::ClassMember:
-            return Visibility::Priv;
-
-        // RULE VIS1: enum variant → pub always
-        case DeclContext::EnumVariant:
-            return Visibility::Pub;
-
-        // RULE VIS1: trait method → pub always
-        case DeclContext::TraitMethod:
-            return Visibility::Pub;
+        case DeclContext::ModuleLevel:  return Visibility::Pub;
+        case DeclContext::StructMember: return Visibility::Pub;
+        case DeclContext::ClassMember:  return Visibility::Priv;
+        case DeclContext::EnumVariant:  return Visibility::Pub;
+        case DeclContext::TraitMethod:  return Visibility::Pub;
     }
     return Visibility::Pub;
 }

@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(vexcompiler VERSION 1.0.0 LANGUAGES C CXX)
 
-# ── C++ Standard ─────────────────────────────────────────────────────────────
+# ── C++ Standard ──────────────────────────────────────────────────────────────
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ── CMake module path ─────────────────────────────────────────────────────────
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -12,19 +13,22 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # ── Options ───────────────────────────────────────────────────────────────────
 include(VexOptions)
 
-# ── Find LLVM ─────────────────────────────────────────────────────────────────
-find_package(LLVM REQUIRED CONFIG)
+# ── Find LLVM 17 ──────────────────────────────────────────────────────────────
+# When building inside the llvm-project tree:
+#   cmake -DLLVM_DIR=<build>/lib/cmake/llvm ..
+# Or set LLVM_DIR env/cache variable pointing to the installed cmake config.
+
+find_package(LLVM 17 REQUIRED CONFIG)
 
 message(STATUS "VEX Compiler v${PROJECT_VERSION}")
 message(STATUS "VEX: LLVM ${LLVM_VERSION} found at ${LLVM_DIR}")
 message(STATUS "VEX: Target: ${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_PROCESSOR}")
 message(STATUS "VEX: Build type: ${CMAKE_BUILD_TYPE}")
 
-# Include LLVM cmake utilities
 include(AddLLVM)
 include(HandleLLVMOptions)
 
-# ── LLVM components used by the VEX compiler ─────────────────────────────────
+# ── LLVM components ───────────────────────────────────────────────────────────
 set(VEX_LLVM_COMPONENTS
     Core
     Support
@@ -48,31 +52,22 @@ set(VEX_LLVM_COMPONENTS
     BitReader
     IRReader
     Linker
-    LTO
     MC
     MCParser
-    MCDisassembler
     Object
     Option
-    ProfileData
-    Remarks
     TransformUtils
     ScalarOpts
     InstCombine
     AggressiveInstCombine
     IPO
     Vectorize
-    Coroutines
     CodeGen
     SelectionDAG
     AsmPrinter
     DebugInfoDWARF
-    DebugInfoPDB
-    DebugInfoMSF
-    DebugInfoCodeView
 )
 
-# Map component names to actual LLVM library targets
 llvm_map_components_to_libnames(VEX_LLVM_LIBS ${VEX_LLVM_COMPONENTS})
 
 # ── Version header generation ─────────────────────────────────────────────────
@@ -83,6 +78,7 @@ configure_file(
 )
 
 # ── Source files ──────────────────────────────────────────────────────────────
+
 set(VEX_CORE_SOURCES
     src/Core/Assert.cpp
     src/Core/Platform.cpp
@@ -149,15 +145,7 @@ set(VEX_SEMA_SOURCES
 
 set(VEX_IR_SOURCES
     src/IR/IRGen.cpp
-    src/IR/IRBuilder.cpp
-    src/IR/IRBlock.cpp
-    src/IR/IRFunction.cpp
-    src/IR/IRModule.cpp
-    src/IR/IRInstr.cpp
-    src/IR/IRType.cpp
-    src/IR/IRValue.cpp
-    src/IR/IRVerifier.cpp
-    src/IR/IRDumper.cpp
+    src/IR/VexIR.cpp
     src/IR/IRPassManager.cpp
     src/IR/LoweringContext.cpp
     src/IR/MatchLowering.cpp
@@ -168,7 +156,15 @@ set(VEX_IR_SOURCES
     src/IR/ErrorPropLowering.cpp
     src/IR/GeneratorLowering.cpp
     src/IR/MoveInserter.cpp
-    src/IR/VexIR.cpp
+    src/IR/IRBlock.cpp
+    src/IR/IRBuilder.cpp
+    src/IR/IRDumper.cpp
+    src/IR/IRFunction.cpp
+    src/IR/IRInstr.cpp
+    src/IR/IRModule.cpp
+    src/IR/IRType.cpp
+    src/IR/IRValue.cpp
+    src/IR/IRVerifier.cpp
 )
 
 set(VEX_CODEGEN_SOURCES
@@ -242,7 +238,7 @@ set(VEX_DRIVER_SOURCES
     src/Driver/IncrementalCache.cpp
 )
 
-# All compiler sources (everything except main.cpp — for library)
+# All lib sources (no main.cpp)
 set(VEX_LIB_SOURCES
     ${VEX_CORE_SOURCES}
     ${VEX_LEXER_SOURCES}
@@ -256,7 +252,7 @@ set(VEX_LIB_SOURCES
     ${VEX_LINKER_SOURCES}
 )
 
-# ── Compiler library (vexlib) ─────────────────────────────────────────────────
+# ── Compiler library ──────────────────────────────────────────────────────────
 add_library(vexlib STATIC ${VEX_LIB_SOURCES})
 
 target_include_directories(vexlib
@@ -278,17 +274,22 @@ target_link_libraries(vexlib
 
 target_compile_features(vexlib PUBLIC cxx_std_17)
 
-# Compiler warnings
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+# Warnings
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(vexlib PRIVATE
-        -Wall -Wextra -Wshadow -Wno-unused-parameter
-        -Wno-unused-function
+        -Wall -Wextra -Wshadow -Wno-unused-parameter -Wno-unused-function
     )
-elseif (MSVC)
-    target_compile_options(vexlib PRIVATE /W4 /wd4100 /wd4505)
+    if(VEX_WARNINGS_AS_ERRORS)
+        target_compile_options(vexlib PRIVATE -Werror)
+    endif()
+elseif(MSVC)
+    target_compile_options(vexlib PRIVATE /W4 /wd4100 /wd4505 /wd4702)
+    if(VEX_WARNINGS_AS_ERRORS)
+        target_compile_options(vexlib PRIVATE /WX)
+    endif()
 endif()
 
-# ── Compiler executable (vexc) ────────────────────────────────────────────────
+# ── Compiler executable ───────────────────────────────────────────────────────
 add_executable(vexc ${VEX_DRIVER_SOURCES})
 
 target_link_libraries(vexc
@@ -306,10 +307,17 @@ target_include_directories(vexc
 
 target_compile_features(vexc PRIVATE cxx_std_17)
 
-# ── Runtime library ────────────────────────────────────────────────────────────
-add_subdirectory(runtime)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(vexc PRIVATE -Wno-unused-parameter)
+endif()
 
-# ── Tools ──────────────────────────────────────────────────────────────────────
+# ── Runtime library ───────────────────────────────────────────────────────────
+if(VEX_BUILD_RUNTIME)
+    add_subdirectory(runtime)
+    target_link_libraries(vexc PRIVATE vex_rt)
+endif()
+
+# ── Tools ─────────────────────────────────────────────────────────────────────
 if(VEX_BUILD_TOOLS)
     add_subdirectory(tools/vex-fmt)
     add_subdirectory(tools/vex-doc)
@@ -338,7 +346,8 @@ endif()
 # ── Install ───────────────────────────────────────────────────────────────────
 include(VexInstall)
 
-# ── Status messages ───────────────────────────────────────────────────────────
-message(STATUS "VEX: Polly: ${VEX_ENABLE_POLLY}")
-message(STATUS "VEX: Tests: ${VEX_BUILD_TESTS}")
-message(STATUS "VEX: Tools: ${VEX_BUILD_TOOLS}")
+# ── Status ────────────────────────────────────────────────────────────────────
+message(STATUS "VEX: Polly:   ${VEX_ENABLE_POLLY}")
+message(STATUS "VEX: Tests:   ${VEX_BUILD_TESTS}")
+message(STATUS "VEX: Tools:   ${VEX_BUILD_TOOLS}")
+message(STATUS "VEX: Runtime: ${VEX_BUILD_RUNTIME}")

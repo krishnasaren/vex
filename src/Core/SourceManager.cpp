@@ -9,30 +9,35 @@
 
 namespace vex {
 
-// ── FileEntry helpers ─────────────────────────────────────────────────────────
+// ── FileEntry ─────────────────────────────────────────────────────────────────
 
 void FileEntry::buildLineOffsets() const {
     if (lineOffsetsBuilt) return;
 
     lineOffsets.clear();
-    lineOffsets.push_back(0); // line 1 starts at byte 0
+    lineOffsets.push_back(0); // line 1 starts at offset 0
+
+    if (!buffer) {
+        lineOffsetsBuilt = true;
+        return;
+    }
 
     const char* data = buffer->data();
-    size_t      size = buffer->size();
+    size_t      sz   = buffer->size();
 
-    for (size_t i = 0; i < size; ++i) {
+    for (size_t i = 0; i < sz; ++i) {
         if (data[i] == '\n') {
-            if (i + 1 <= size)
+            if (i + 1 <= sz)
                 lineOffsets.push_back(static_cast<uint32_t>(i + 1));
         }
     }
-
     lineOffsetsBuilt = true;
 }
 
 // ── SourceManager ─────────────────────────────────────────────────────────────
 
 FileID SourceManager::loadFile(std::string_view path) {
+    // Canonicalize path
     std::string absPath;
     try {
         absPath = std::filesystem::absolute(std::string(path)).string();
@@ -45,7 +50,6 @@ FileID SourceManager::loadFile(std::string_view path) {
     if (it != pathToID_.end())
         return it->second;
 
-    // Load the file
     auto buf = MemoryBuffer::fromFile(absPath);
     if (!buf)
         return FileID::invalid();
@@ -59,10 +63,11 @@ FileID SourceManager::addBuffer(
 {
     FileID id{nextID_++};
 
-    auto entry        = std::make_unique<FileEntry>();
-    entry->id         = id;
-    entry->path       = std::string(virtualPath);
-    entry->buffer     = std::move(buffer);
+    auto entry           = std::make_unique<FileEntry>();
+    entry->id            = id;
+    entry->path          = std::string(virtualPath);
+    entry->buffer        = std::move(buffer);
+    entry->lineOffsetsBuilt = false;
 
     pathToID_[entry->path] = id;
     files_.push_back(std::move(entry));
@@ -81,11 +86,12 @@ std::string_view SourceManager::getPath(FileID id) const {
 
 SourceLocation SourceManager::getLocation(FileID id, const char* ptr) const {
     auto* entry = getEntry(id);
-    if (!entry) return SourceLocation::invalid();
+    if (!entry || !entry->buffer) return SourceLocation::invalid();
 
     const char* base = entry->buffer->data();
-    size_t      size = entry->buffer->size();
-    if (ptr < base || ptr > base + size)
+    size_t      sz   = entry->buffer->size();
+
+    if (ptr < base || ptr > base + sz)
         return SourceLocation::invalid();
 
     uint32_t offset = static_cast<uint32_t>(ptr - base);
@@ -99,33 +105,40 @@ SourceLocation SourceManager::getLocation(FileID id, uint32_t byteOffset) const 
     entry->buildLineOffsets();
     const auto& offsets = entry->lineOffsets;
 
-    // Binary search for line number
-    auto it = std::upper_bound(offsets.begin(), offsets.end(), byteOffset);
-    uint32_t line = static_cast<uint32_t>(std::distance(offsets.begin(), it));
-    uint32_t lineStart = (line > 0) ? offsets[line - 1] : 0;
-    uint32_t col = byteOffset - lineStart + 1; // 1-based
+    if (offsets.empty()) return SourceLocation(id, 1, byteOffset + 1);
 
-    return SourceLocation(id, line, col);
+    // Binary search: find the last line start <= byteOffset
+    auto it = std::upper_bound(offsets.begin(), offsets.end(), byteOffset);
+    uint32_t lineIdx  = static_cast<uint32_t>(std::distance(offsets.begin(), it)) - 1;
+    uint32_t lineStart = offsets[lineIdx];
+    uint32_t col       = byteOffset - lineStart + 1; // 1-based
+
+    return SourceLocation(id, lineIdx + 1, col); // line is 1-based
 }
 
 std::string_view SourceManager::getLineText(SourceLocation loc) const {
     auto* entry = getEntry(loc.fileID());
-    if (!entry) return {};
+    if (!entry || !entry->buffer) return {};
 
     entry->buildLineOffsets();
     const auto& offsets = entry->lineOffsets;
 
-    uint32_t lineIdx = loc.line() - 1; // 0-based
-    if (lineIdx >= offsets.size()) return {};
+    uint32_t lineIdx = loc.line() - 1; // convert to 0-based
+    if (lineIdx >= static_cast<uint32_t>(offsets.size())) return {};
 
-    uint32_t    start = offsets[lineIdx];
-    uint32_t    end   = (lineIdx + 1 < offsets.size())
-                            ? offsets[lineIdx + 1]
-                            : static_cast<uint32_t>(entry->buffer->size());
+    uint32_t start = offsets[lineIdx];
+    uint32_t end;
 
-    // Strip trailing \n and \r\n
+    if (lineIdx + 1 < static_cast<uint32_t>(offsets.size()))
+        end = offsets[lineIdx + 1];
+    else
+        end = static_cast<uint32_t>(entry->buffer->size());
+
     const char* data = entry->buffer->data();
-    while (end > start && (data[end - 1] == '\n' || data[end - 1] == '\r'))
+
+    // Strip trailing newline chars
+    while (end > start &&
+           (data[end - 1] == '\n' || data[end - 1] == '\r'))
         --end;
 
     return {data + start, end - start};

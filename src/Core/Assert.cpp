@@ -11,18 +11,20 @@ namespace vex {
 [[noreturn]] void assertionFailed(
     std::string_view msg,
     std::string_view file,
-    int line,
+    int              line,
     std::string_view func)
 {
     fprintf(stderr,
         "\n"
-        "=== VEX INTERNAL COMPILER ERROR ===\n"
-        "  Assertion failed: %.*s\n"
-        "  Location: %.*s:%d\n"
-        "  Function: %.*s\n"
-        "\n"
-        "This is a compiler bug. Please report it.\n"
-        "\n",
+        "╔══════════════════════════════════════════════════════════╗\n"
+        "║         VEX INTERNAL COMPILER ERROR                      ║\n"
+        "╠══════════════════════════════════════════════════════════╣\n"
+        "║ Assertion: %.*s\n"
+        "║ Location:  %.*s:%d\n"
+        "║ Function:  %.*s\n"
+        "╚══════════════════════════════════════════════════════════╝\n"
+        "\nThis is a compiler bug. Please report it at:\n"
+        "  https://github.com/vex-lang/vex/issues\n\n",
         (int)msg.size(),  msg.data(),
         (int)file.size(), file.data(),
         line,

@@ -22,38 +22,41 @@ void DiagnosticBuilder::emit() {
 
 // ── DiagnosticEngine ──────────────────────────────────────────────────────────
 
-DiagnosticBuilder DiagnosticEngine::report(DiagID id,
+DiagnosticBuilder DiagnosticEngine::report(DiagID        id,
                                             SourceLocation loc,
-                                            std::string message) {
-    return DiagnosticBuilder(*this, Diagnostic(id, loc, std::move(message)));
+                                            std::string    message) {
+    return DiagnosticBuilder(*this,
+                             Diagnostic(id, loc, std::move(message)));
 }
 
-void DiagnosticEngine::emitSimple(DiagID id,
+void DiagnosticEngine::emitSimple(DiagID        id,
                                    SourceLocation loc,
-                                   std::string message) {
+                                   std::string    message) {
     emit(Diagnostic(id, loc, std::move(message)));
 }
 
 void DiagnosticEngine::emit(const Diagnostic& diag) {
-    // Apply warnings-as-errors upgrade
+    // Clone so we can potentially upgrade severity
     Diagnostic d = diag;
+
+    // Warnings-as-errors
     if (warningsAsErrors_ && d.isWarning())
         d.setSeverity(DiagSeverity::Error);
 
-    // Suppress warnings if configured
+    // Suppress warnings
     if (suppressWarnings_ && d.isWarning())
         return;
 
     // Count
-    if (d.isError() || d.isFatal()) {
+    if (d.isFatal()) {
         ++errorCount_;
-        if (d.isFatal())
-            hasFatal_ = true;
+        hasFatal_ = true;
+    } else if (d.isError()) {
+        ++errorCount_;
     } else if (d.isWarning()) {
         ++warningCount_;
     }
 
-    // Deliver to consumer
     consumer_.handleDiagnostic(d);
 }
 

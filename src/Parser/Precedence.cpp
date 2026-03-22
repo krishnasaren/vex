@@ -12,9 +12,6 @@ Prec infixPrecedence(TokenKind kind) {
         case TokenKind::ColonColon:
             return Prec::Module;
 
-        // Level 14 — postfix: () [] . ++ --
-        // These are handled directly in parsePostfix, not via Pratt table.
-
         // Level 12 — power (right-associative)
         case TokenKind::StarStar:
             return Prec::Power;
@@ -88,6 +85,11 @@ Prec infixPrecedence(TokenKind kind) {
         case TokenKind::PipeArrow:
             return Prec::Pipe;
 
+        // Range operators (between additive and comparison)
+        case TokenKind::DotDot:
+        case TokenKind::DotDotEq:
+            return Prec::Additive; // lower than arithmetic, parsed as postfix-like
+
         // Level -2 — assignment (lowest)
         case TokenKind::Assign:
         case TokenKind::ColonAssign:
@@ -117,26 +119,26 @@ Prec infixPrecedence(TokenKind kind) {
 
 bool isRightAssociative(TokenKind kind) {
     switch (kind) {
-        case TokenKind::StarStar:       // **  power
-        case TokenKind::Assign:         // =
-        case TokenKind::ColonAssign:    // :=
-        case TokenKind::PlusAssign:     // +=
-        case TokenKind::MinusAssign:    // -=
-        case TokenKind::StarAssign:     // *=
-        case TokenKind::SlashAssign:    // /=
-        case TokenKind::PercentAssign:  // %=
-        case TokenKind::StarStarAssign: // **=
-        case TokenKind::AmpAssign:      // &=
-        case TokenKind::PipeAssign:     // |=
-        case TokenKind::CaretAssign:    // ^=
-        case TokenKind::LShiftAssign:   // <<=
-        case TokenKind::RShiftAssign:   // >>=
-        case TokenKind::WrapAddAssign:  // +%=
-        case TokenKind::WrapSubAssign:  // -%=
-        case TokenKind::WrapMulAssign:  // *%=
-        case TokenKind::SatAddAssign:   // +|=
-        case TokenKind::SatSubAssign:   // -|=
-        case TokenKind::SatMulAssign:   // *|=
+        case TokenKind::StarStar:
+        case TokenKind::Assign:
+        case TokenKind::ColonAssign:
+        case TokenKind::PlusAssign:
+        case TokenKind::MinusAssign:
+        case TokenKind::StarAssign:
+        case TokenKind::SlashAssign:
+        case TokenKind::PercentAssign:
+        case TokenKind::StarStarAssign:
+        case TokenKind::AmpAssign:
+        case TokenKind::PipeAssign:
+        case TokenKind::CaretAssign:
+        case TokenKind::LShiftAssign:
+        case TokenKind::RShiftAssign:
+        case TokenKind::WrapAddAssign:
+        case TokenKind::WrapSubAssign:
+        case TokenKind::WrapMulAssign:
+        case TokenKind::SatAddAssign:
+        case TokenKind::SatSubAssign:
+        case TokenKind::SatMulAssign:
             return true;
         default:
             return false;
@@ -163,6 +165,7 @@ bool canStartUnary(TokenKind kind) {
         case TokenKind::KW_not:
         case TokenKind::KW_move:
         case TokenKind::KW_copy:
+        case TokenKind::Hat:
             return true;
         default:
             return false;
@@ -172,7 +175,6 @@ bool canStartUnary(TokenKind kind) {
 bool canStartExpr(TokenKind kind) {
     if (canStartUnary(kind)) return true;
     switch (kind) {
-        // Literals
         case TokenKind::IntLiteral:
         case TokenKind::FloatLiteral:
         case TokenKind::StringLiteral:
@@ -183,7 +185,6 @@ bool canStartExpr(TokenKind kind) {
         case TokenKind::BoolTrue:
         case TokenKind::BoolFalse:
         case TokenKind::Null:
-        // Identifiers and keywords that start expressions
         case TokenKind::Identifier:
         case TokenKind::KW_self:
         case TokenKind::KW_super:
@@ -200,11 +201,9 @@ bool canStartExpr(TokenKind kind) {
         case TokenKind::KW_async:
         case TokenKind::KW_unsafe:
         case TokenKind::KW_comptime:
-        // Grouping
         case TokenKind::LParen:
         case TokenKind::LBracket:
         case TokenKind::LBrace:
-        // Lambda delimiter
         case TokenKind::Pipe:
             return true;
         default:

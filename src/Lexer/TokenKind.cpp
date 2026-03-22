@@ -4,6 +4,7 @@
 
 #include "vex/Lexer/TokenKind.h"
 #include <unordered_map>
+#include <string_view>
 
 namespace vex {
 
@@ -11,6 +12,7 @@ std::string_view tokenKindName(TokenKind kind) {
     switch (kind) {
         case TokenKind::Eof:              return "<eof>";
         case TokenKind::Error:            return "<error>";
+        case TokenKind::Newline:          return "<newline>";
         case TokenKind::IntLiteral:       return "integer literal";
         case TokenKind::FloatLiteral:     return "float literal";
         case TokenKind::StringLiteral:    return "string literal";
@@ -92,6 +94,7 @@ std::string_view tokenKindName(TokenKind kind) {
         case TokenKind::KW_as:            return "as";
         case TokenKind::KW_as_q:          return "as?";
         case TokenKind::KW_is:            return "is";
+        case TokenKind::KW_for:           return "for";
         case TokenKind::LParen:           return "(";
         case TokenKind::RParen:           return ")";
         case TokenKind::LBracket:         return "[";
@@ -122,6 +125,14 @@ std::string_view tokenKindName(TokenKind kind) {
         case TokenKind::AmpAssign:        return "&=";
         case TokenKind::PipeAssign:       return "|=";
         case TokenKind::CaretAssign:      return "^=";
+        case TokenKind::LShiftAssign:     return "<<=";
+        case TokenKind::RShiftAssign:     return ">>=";
+        case TokenKind::WrapAddAssign:    return "+%=";
+        case TokenKind::WrapSubAssign:    return "-%=";
+        case TokenKind::WrapMulAssign:    return "*%=";
+        case TokenKind::SatAddAssign:     return "+|=";
+        case TokenKind::SatSubAssign:     return "-|=";
+        case TokenKind::SatMulAssign:     return "*|=";
         case TokenKind::Plus:             return "+";
         case TokenKind::Minus:            return "-";
         case TokenKind::Star:             return "*";
@@ -162,7 +173,7 @@ std::string_view tokenKindName(TokenKind kind) {
 }
 
 bool isKeyword(TokenKind kind) {
-    auto v = static_cast<uint16_t>(kind);
+    auto v  = static_cast<uint16_t>(kind);
     auto lo = static_cast<uint16_t>(TokenKind::KW_var);
     auto hi = static_cast<uint16_t>(TokenKind::KW_is);
     return v >= lo && v <= hi;
@@ -234,6 +245,7 @@ bool isBinaryOp(TokenKind kind) {
         case TokenKind::PipeArrow:
         case TokenKind::ColonColon:
         case TokenKind::KW_as:    case TokenKind::KW_is:
+        case TokenKind::DotDot:   case TokenKind::DotDotEq:
             return true;
         default:
             return false;
@@ -251,89 +263,87 @@ bool isUnaryPrefixOp(TokenKind kind) {
         case TokenKind::MinusMinus:
         case TokenKind::KW_not:
         case TokenKind::KW_move:
+        case TokenKind::KW_copy:
             return true;
         default:
             return false;
     }
 }
 
-// ── Keyword lookup table ──────────────────────────────────────────────────────
-
 TokenKind lookupKeyword(std::string_view text) {
-    // Static keyword map — built once on first call
     static const std::unordered_map<std::string_view, TokenKind> kw = {
-        {"var",         TokenKind::KW_var},
-        {"let",         TokenKind::KW_let},
-        {"const",       TokenKind::KW_const},
-        {"fn",          TokenKind::KW_fn},
-        {"async",       TokenKind::KW_async},
-        {"await",       TokenKind::KW_await},
-        {"yield",       TokenKind::KW_yield},
-        {"if",          TokenKind::KW_if},
-        {"elif",        TokenKind::KW_elif},
-        {"else",        TokenKind::KW_else},
-        {"match",       TokenKind::KW_match},
-        {"for",         TokenKind::KW_for},
-        {"while",       TokenKind::KW_while},
-        {"do",          TokenKind::KW_do},
-        {"loop",        TokenKind::KW_loop},
-        {"in",          TokenKind::KW_in},
-        {"step",        TokenKind::KW_step},
-        {"skip",        TokenKind::KW_skip},
-        {"stop",        TokenKind::KW_stop},
-        {"return",      TokenKind::KW_return},
-        {"struct",      TokenKind::KW_struct},
-        {"class",       TokenKind::KW_class},
-        {"enum",        TokenKind::KW_enum},
-        {"union",       TokenKind::KW_union},
-        {"trait",       TokenKind::KW_trait},
-        {"interface",   TokenKind::KW_interface},
-        {"impl",        TokenKind::KW_impl},
-        {"bitfield",    TokenKind::KW_bitfield},
-        {"sealed",      TokenKind::KW_sealed},
-        {"abstract",    TokenKind::KW_abstract},
-        {"pub",         TokenKind::KW_pub},
-        {"priv",        TokenKind::KW_priv},
-        {"prot",        TokenKind::KW_prot},
-        {"internal",    TokenKind::KW_internal},
-        {"self",        TokenKind::KW_self},
-        {"super",       TokenKind::KW_super},
-        {"Self",        TokenKind::KW_Self},
-        {"mod",         TokenKind::KW_mod},
-        {"init",        TokenKind::KW_init},
-        {"deinit",      TokenKind::KW_deinit},
-        {"static",      TokenKind::KW_static},
-        {"prop",        TokenKind::KW_prop},
-        {"op",          TokenKind::KW_op},
-        {"true",        TokenKind::BoolTrue},
-        {"false",       TokenKind::BoolFalse},
-        {"null",        TokenKind::Null},
-        {"and",         TokenKind::KW_and},
-        {"or",          TokenKind::KW_or},
-        {"not",         TokenKind::KW_not},
-        {"move",        TokenKind::KW_move},
-        {"copy",        TokenKind::KW_copy},
-        {"unsafe",      TokenKind::KW_unsafe},
-        {"extern",      TokenKind::KW_extern},
-        {"import",      TokenKind::KW_import},
-        {"type",        TokenKind::KW_type},
-        {"distinct",    TokenKind::KW_distinct},
-        {"comptime",    TokenKind::KW_comptime},
-        {"defer",       TokenKind::KW_defer},
-        {"use",         TokenKind::KW_use},
-        {"try",         TokenKind::KW_try},
-        {"catch",       TokenKind::KW_catch},
-        {"panic",       TokenKind::KW_panic},
-        {"assert",      TokenKind::KW_assert},
-        {"assertEq",    TokenKind::KW_assertEq},
-        {"select",      TokenKind::KW_select},
-        {"timeout",     TokenKind::KW_timeout},
-        {"asm",         TokenKind::KW_asm},
-        {"inline",      TokenKind::KW_inline},
-        {"where",       TokenKind::KW_where},
-        {"thread_local",TokenKind::KW_thread_local},
-        {"as",          TokenKind::KW_as},
-        {"is",          TokenKind::KW_is},
+        {"var",          TokenKind::KW_var},
+        {"let",          TokenKind::KW_let},
+        {"const",        TokenKind::KW_const},
+        {"fn",           TokenKind::KW_fn},
+        {"async",        TokenKind::KW_async},
+        {"await",        TokenKind::KW_await},
+        {"yield",        TokenKind::KW_yield},
+        {"if",           TokenKind::KW_if},
+        {"elif",         TokenKind::KW_elif},
+        {"else",         TokenKind::KW_else},
+        {"match",        TokenKind::KW_match},
+        {"for",          TokenKind::KW_for},
+        {"while",        TokenKind::KW_while},
+        {"do",           TokenKind::KW_do},
+        {"loop",         TokenKind::KW_loop},
+        {"in",           TokenKind::KW_in},
+        {"step",         TokenKind::KW_step},
+        {"skip",         TokenKind::KW_skip},
+        {"stop",         TokenKind::KW_stop},
+        {"return",       TokenKind::KW_return},
+        {"struct",       TokenKind::KW_struct},
+        {"class",        TokenKind::KW_class},
+        {"enum",         TokenKind::KW_enum},
+        {"union",        TokenKind::KW_union},
+        {"trait",        TokenKind::KW_trait},
+        {"interface",    TokenKind::KW_interface},
+        {"impl",         TokenKind::KW_impl},
+        {"bitfield",     TokenKind::KW_bitfield},
+        {"sealed",       TokenKind::KW_sealed},
+        {"abstract",     TokenKind::KW_abstract},
+        {"pub",          TokenKind::KW_pub},
+        {"priv",         TokenKind::KW_priv},
+        {"prot",         TokenKind::KW_prot},
+        {"internal",     TokenKind::KW_internal},
+        {"self",         TokenKind::KW_self},
+        {"super",        TokenKind::KW_super},
+        {"Self",         TokenKind::KW_Self},
+        {"mod",          TokenKind::KW_mod},
+        {"init",         TokenKind::KW_init},
+        {"deinit",       TokenKind::KW_deinit},
+        {"static",       TokenKind::KW_static},
+        {"prop",         TokenKind::KW_prop},
+        {"op",           TokenKind::KW_op},
+        {"true",         TokenKind::BoolTrue},
+        {"false",        TokenKind::BoolFalse},
+        {"null",         TokenKind::Null},
+        {"and",          TokenKind::KW_and},
+        {"or",           TokenKind::KW_or},
+        {"not",          TokenKind::KW_not},
+        {"move",         TokenKind::KW_move},
+        {"copy",         TokenKind::KW_copy},
+        {"unsafe",       TokenKind::KW_unsafe},
+        {"extern",       TokenKind::KW_extern},
+        {"import",       TokenKind::KW_import},
+        {"type",         TokenKind::KW_type},
+        {"distinct",     TokenKind::KW_distinct},
+        {"comptime",     TokenKind::KW_comptime},
+        {"defer",        TokenKind::KW_defer},
+        {"use",          TokenKind::KW_use},
+        {"try",          TokenKind::KW_try},
+        {"catch",        TokenKind::KW_catch},
+        {"panic",        TokenKind::KW_panic},
+        {"assert",       TokenKind::KW_assert},
+        {"assertEq",     TokenKind::KW_assertEq},
+        {"select",       TokenKind::KW_select},
+        {"timeout",      TokenKind::KW_timeout},
+        {"asm",          TokenKind::KW_asm},
+        {"inline",       TokenKind::KW_inline},
+        {"where",        TokenKind::KW_where},
+        {"thread_local", TokenKind::KW_thread_local},
+        {"as",           TokenKind::KW_as},
+        {"is",           TokenKind::KW_is},
     };
 
     auto it = kw.find(text);
