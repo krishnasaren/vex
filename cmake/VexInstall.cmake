@@ -4,14 +4,19 @@ include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 
 # Install binaries
-install(TARGETS vexc
+install(TARGETS vexc vexlib
+    EXPORT VexTargets
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    COMPONENT VexCompiler
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    COMPONENT VexDev
 )
 
-install(TARGETS vexlib
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    COMPONENT VexDev
+# Export targets
+install(EXPORT VexTargets
+    FILE VexTargets.cmake
+    NAMESPACE Vex::
+    DESTINATION "${VEX_CMAKE_CONFIG_DIR}"
 )
 
 # Install headers
