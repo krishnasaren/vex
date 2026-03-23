@@ -5,7 +5,7 @@
 // Tracks: current function, current block, local variable map, loop stack.
 // Provides typed emit<T>() helpers.
 // ============================================================================
-
+/*
 #include "vex/IR/VexIR.h"
 #include "vex/AST/Expr.h"
 #include "vex/AST/Pattern.h"
@@ -167,3 +167,49 @@ private:
 };
 
 } // namespace vex
+*/
+
+
+
+
+
+#pragma once
+// ============================================================================
+// vex/IR/LoweringContext.h  — Context shared by all IR lowering passes
+// ============================================================================
+#include "vex/IR/IRBuilder.h"
+#include "vex/IR/IRModule.h"
+#include "vex/Core/DiagnosticEngine.h"
+
+namespace vex {
+
+class LoweringContext {
+public:
+    LoweringContext(IRModule& mod, DiagnosticEngine& diags)
+        : mod_(mod), builder_(mod), diags_(diags) {}
+
+    IRModule&         module()  { return mod_; }
+    IRBuilder&        builder() { return builder_; }
+    DiagnosticEngine& diags()   { return diags_; }
+
+    // State for async coroutine transformation
+    IRFunction* currentCoroutine    = nullptr;
+    IRBlock*    suspendBlock        = nullptr;
+    IRBlock*    resumeBlock         = nullptr;
+    IRValue*    coroutineStatePtr   = nullptr;
+
+    // State for generator transformation
+    IRFunction* currentGenerator    = nullptr;
+    IRBlock*    yieldBlock          = nullptr;
+    IRValue*    generatorStatePtr   = nullptr;
+
+private:
+    IRModule&         mod_;
+    IRBuilder         builder_;
+    DiagnosticEngine& diags_;
+};
+
+} // namespace vex
+
+
+

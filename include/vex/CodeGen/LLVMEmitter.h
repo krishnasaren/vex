@@ -3,7 +3,7 @@
 // vex/CodeGen/LLVMEmitter.h
 // Translates VexIR into LLVM IR using the LLVM C++ API.
 // ============================================================================
-
+/*
 #include "vex/IR/VexIR.h"
 #include "vex/Core/VexContext.h"
 
@@ -89,6 +89,69 @@ private:
 
     // Lookup a mapped LLVM value (asserts if not found)
     llvm::Value* lookup(IRValue* val);
+};
+
+} // namespace vex
+
+*/
+// ============================================================================
+// vex/CodeGen/LLVMEmitter.h  — Emits LLVM IR from VEX IR
+// ============================================================================
+#include "vex/IR/IRModule.h"
+#include "vex/CodeGen/LLVMTypeMapper.h"
+#include "vex/CodeGen/LLVMDebugInfo.h"
+#include "vex/CodeGen/ABI.h"
+#include "vex/Driver/Options.h"
+#include "vex/Core/DiagnosticEngine.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Module.h"
+#include <unordered_map>
+#include <memory>
+
+namespace vex {
+
+class LLVMEmitter {
+public:
+    LLVMEmitter(llvm::Module& llvmMod,
+                DiagnosticEngine& diags,
+                const DriverOptions& opts);
+
+    bool emit(IRModule& vexMod);
+
+private:
+    llvm::Module&        llvmMod_;
+    llvm::LLVMContext&   ctx_;
+    llvm::IRBuilder<>    builder_;
+    DiagnosticEngine&    diags_;
+    const DriverOptions& opts_;
+    LLVMTypeMapper       typeMap_;
+    std::unique_ptr<LLVMDebugInfoEmitter> debugInfo_;
+    std::unique_ptr<ABIInfo>             abi_;
+
+    // VEX IR value → LLVM value mapping
+    std::unordered_map<const IRValue*, llvm::Value*> valueMap_;
+    // VEX IR block → LLVM basic block mapping
+    std::unordered_map<const IRBlock*, llvm::BasicBlock*> blockMap_;
+
+    void emitFunction(const IRFunction& fn);
+    void emitBlock(const IRBlock& blk);
+    llvm::Value* emitInstr(const IRInstr& instr);
+    llvm::Value* emitConst(const IRValue& v);
+
+    llvm::Value* emitArith(const IRInstr& i);
+    llvm::Value* emitCmp(const IRInstr& i);
+    llvm::Value* emitMemory(const IRInstr& i);
+    llvm::Value* emitControl(const IRInstr& i);
+    llvm::Value* emitCall(const IRInstr& i);
+    llvm::Value* emitConvert(const IRInstr& i);
+    llvm::Value* emitAggregate(const IRInstr& i);
+    llvm::Value* emitAtomic(const IRInstr& i);
+    llvm::Value* emitPhi(const IRInstr& i);
+
+    llvm::Value*     lookup(const IRValue* v);
+    llvm::BasicBlock* lookupBlock(const IRBlock* b);
+    llvm::Function*   declareFn(const IRFunction& fn);
+    llvm::GlobalVariable* declareGlobal(const IRGlobal& g);
 };
 
 } // namespace vex
