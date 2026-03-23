@@ -11,8 +11,11 @@ install(TARGETS vexc vexlib
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     COMPONENT VexDev
 )
+# Where CMake config files will go
+set(VEX_CMAKE_CONFIG_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/vex")
 
 # Export targets
+
 install(EXPORT VexTargets
     FILE VexTargets.cmake
     NAMESPACE Vex::
