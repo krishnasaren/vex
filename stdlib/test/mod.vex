@@ -1,0 +1,7 @@
+// VEX Standard Library — std::test
+fn assert(cond: bool) {
+    if !cond { panic("assertion failed") }
+}
+fn assertEqual<T : Eq>(actual: T, expected: T) {
+    if actual != expected { panic("assertEqual failed") }
+}

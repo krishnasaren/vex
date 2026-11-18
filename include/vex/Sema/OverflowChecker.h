@@ -6,6 +6,9 @@
 // vex/Sema/OverflowChecker.h  — Detects compile-time integer overflow
 // ============================================================================
 #include "vex/Sema/SemaContext.h"
+#include "vex/AST/Decl.h"
+#include "vex/AST/Expr.h"
+#include "vex/AST/Stmt.h"
 #include "vex/AST/Expr.h"
 
 namespace vex {
@@ -21,7 +24,7 @@ private:
     SemaContext& ctx_;
     bool checkBinary(BinaryExpr* e);
     bool checkUnary(UnaryExpr* e);
-    bool checkLiteral(LiteralExpr* e);
+    bool checkLiteral(IntLitExpr* e);
     bool checkCast(CastExpr* e);
 };
 

@@ -1,1 +1,2 @@
-// src/Driver/TargetInfo.cpp
+#include "vex/Driver/TargetInfo.h"
+namespace vex {}

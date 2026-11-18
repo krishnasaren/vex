@@ -1,8 +1,6 @@
 // src/Sema/Symbol.cpp
-
-
-
 #include "vex/Sema/Symbol.h"
+
 namespace vex {
 
 std::string_view symbolKindName(SymbolKind k) {
@@ -26,4 +24,3 @@ std::string_view symbolKindName(SymbolKind k) {
 }
 
 } // namespace vex
-

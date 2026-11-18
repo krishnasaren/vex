@@ -44,7 +44,7 @@ private:
     uint32_t     nextVarId_ = 0;
     std::unordered_map<uint32_t, TypeNode*> solution_;
 
-    TypeNode* inferLiteral(LiteralExpr* e);
+    TypeNode* inferLiteral(IntLitExpr* e);
     TypeNode* inferBinary(BinaryExpr* e);
     TypeNode* inferUnary(UnaryExpr* e);
     TypeNode* inferCall(CallExpr* e);
@@ -52,15 +52,15 @@ private:
     TypeNode* inferBlock(BlockExpr* e);
     TypeNode* inferIf(IfExpr* e);
     TypeNode* inferMatch(MatchExpr* e);
-    TypeNode* inferClosure(ClosureExpr* e);
+    TypeNode* inferClosure(LambdaExpr* e);
     TypeNode* inferIndex(IndexExpr* e);
     TypeNode* inferCast(CastExpr* e);
     TypeNode* inferRange(RangeExpr* e);
     TypeNode* inferTuple(TupleExpr* e);
-    TypeNode* inferArray(ArrayExpr* e);
-    TypeNode* inferAwait(AwaitExpr* e);
-    TypeNode* inferYield(YieldExpr* e);
-    TypeNode* inferTry(TryExpr* e);
+    TypeNode* inferArray(ListExpr* e);
+    TypeNode* inferAwait(CastExpr* e);
+    TypeNode* inferYield(UnaryExpr* e);
+    TypeNode* inferTry(UnaryExpr* e);
 
     bool occursIn(uint32_t varId, TypeNode* t);
 };

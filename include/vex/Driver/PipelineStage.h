@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // include/vex/Driver/PipelineStage.h
 
 // vex/Driver/PipelineStage.h  — pipeline stage enum for -stop-after=

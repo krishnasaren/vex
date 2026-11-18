@@ -8,6 +8,7 @@
 // ============================================================================
 #include "vex/IR/IRType.h"
 #include "vex/AST/Type.h"
+#include "vex/AST/Decl.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/DerivedTypes.h"

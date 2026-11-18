@@ -1,4 +1,5 @@
 #pragma once
+#include "vex/AST/Expr.h"
 // include/vex/Sema/NameResolver.h
 
 
@@ -39,6 +40,7 @@ public:
     void visitConstDecl(ConstDecl* n)     override;
     void visitImportDecl(ImportDecl* n)   override;
     void visitVarDeclStmt(VarDeclStmt* n) override;
+    void visitLambdaExpr(LambdaExpr* n)   override;
     void visitIdentExpr(IdentExpr* n)     override;
     void visitBlockStmt(BlockStmt* n)     override;
     void visitForStmt(ForStmt* n)         override;

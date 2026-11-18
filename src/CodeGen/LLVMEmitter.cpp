@@ -1,599 +1,345 @@
-// src/CodeGen/LLVMEmitter.cpp
-// ============================================================================
-// vex/CodeGen/LLVMEmitter.cpp
-// Translates VexIR → LLVM IR using the LLVM 17 C++ API.
-// ============================================================================
-
+// src/CodeGen/LLVMEmitter.cpp — VexIR → LLVM IR translation
 #include "vex/CodeGen/LLVMEmitter.h"
-#include "vex/Core/Assert.h"
-#include "vex/Lexer/TokenKind.h"
-
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/Function.h>
-#include <llvm/IR/BasicBlock.h>
-#include <llvm/IR/Value.h>
-#include <llvm/IR/Type.h>
-#include <llvm/IR/DerivedTypes.h>
-#include <llvm/IR/Constants.h>
-#include <llvm/IR/GlobalVariable.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/Support/raw_ostream.h>
+#include "vex/IR/VexIR.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Verifier.h"
 
 namespace vex {
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+LLVMEmitter::LLVMEmitter(llvm::Module& llvmMod,
+                          DiagnosticEngine& diags,
+                          const DriverOptions& opts)
+    : llvmMod_(llvmMod)
+    , ctx_(llvmMod.getContext())
+    , builder_(llvmMod.getContext())
+    , diags_(diags)
+    , opts_(opts)
+    , typeMap_(llvmMod.getContext())
+{}
 
-LLVMEmitter::LLVMEmitter(VexContext&        vexCtx,
-                          llvm::LLVMContext& llvmCtx,
-                          const std::string& moduleName)
-    : vexCtx_(vexCtx)
-    , llvmCtx_(llvmCtx)
-    , builder_(llvmCtx)
-{
-    llvmMod_ = std::make_unique<llvm::Module>(moduleName, llvmCtx);
-    declareRuntimeFunctions();
+bool LLVMEmitter::emit(IRModule& vexMod) {
+    // Forward-declare all functions
+    for (auto& fn : vexMod.functions())
+        declareFn(*fn);
+    // Declare globals
+    for (auto& g : vexMod.globals())
+        declareGlobal(*g);
+    // Emit bodies
+    for (auto& fn : vexMod.functions()) {
+        if (!fn->blocks().empty())
+            emitFunction(*fn);
+    }
+    bool bad = llvm::verifyModule(llvmMod_, &llvm::errs());
+    return !bad;
 }
 
-// ── Main entry point ──────────────────────────────────────────────────────────
+llvm::Function* LLVMEmitter::declareFn(const IRFunction& fn) {
+    if (auto* ex = llvmMod_.getFunction(fn.name())) return ex;
 
-std::unique_ptr<llvm::Module> LLVMEmitter::emit(IRModule* irMod) {
-    VEX_ASSERT(irMod != nullptr, "LLVMEmitter::emit() called with null IRModule");
-
-    // First pass: declare all functions so forward calls work
-    for (auto& fn : irMod->functions()) {
-        auto* llvmFn = llvm::Function::Create(
-            llvm::FunctionType::get(voidType(), {}, false),
-            llvm::Function::ExternalLinkage,
-            std::string(fn->name()),
-            llvmMod_.get());
-        fnMap_[std::string(fn->name())] = llvmFn;
+    // Infer return type: if any return instruction carries a value → i64, else void.
+    // Special case: main() → i32 (C ABI requirement)
+    llvm::Type* retTy = typeMap_.voidTy();
+    for (const auto& blk : fn.blocks()) {
+        for (const auto& instr : blk->instrs()) {
+            if (instr->kind() == IRInstrKind::Return) {
+                const auto& r = static_cast<const IRReturnInstr&>(*instr);
+                if (r.value()) { retTy = typeMap_.i64Ty(); goto done; }
+            }
+        }
     }
+    if (fn.name() == "main") retTy = typeMap_.i32Ty();
+    done:
 
-    // Second pass: emit bodies
-    for (auto& fn : irMod->functions())
-        emitFunction(fn.get());
-
-    // Emit globals
-    for (auto& g : irMod->globals()) {
-        auto* gv = new llvm::GlobalVariable(
-            *llvmMod_,
-            intType(64),
-            !g->isMutable(),
-            llvm::GlobalValue::InternalLinkage,
-            llvm::ConstantInt::get(intType(64), 0),
-            std::string(g->name()));
-        (void)gv;
-    }
-
-    // Verify the module
-    std::string errStr;
-    llvm::raw_string_ostream errOS(errStr);
-    if (llvm::verifyModule(*llvmMod_, &errOS)) {
-        // Non-fatal: the module may have errors during development
-        llvm::errs() << "VEX IR verification warning: " << errStr << "\n";
-    }
-
-    return std::move(llvmMod_);
+    std::vector<llvm::Type*> paramTys;
+    for (const auto& p : fn.params())
+        paramTys.push_back(typeMap_.i64Ty());
+    auto* fty = llvm::FunctionType::get(retTy, paramTys, false);
+    bool isInternal = !fn.name().empty() && fn.name()[0] == '_'
+                   && fn.name().size() > 1 && fn.name()[1] == '_';
+    auto lnk = isInternal ? llvm::Function::InternalLinkage
+                           : llvm::Function::ExternalLinkage;
+    return llvm::Function::Create(fty, lnk, fn.name(), llvmMod_);
 }
 
-// ── Function emission ─────────────────────────────────────────────────────────
+llvm::GlobalVariable* LLVMEmitter::declareGlobal(const IRGlobal& g) {
+    llvm::Constant* init = llvm::Constant::getNullValue(typeMap_.i64Ty());
+    return new llvm::GlobalVariable(llvmMod_, typeMap_.i64Ty(),
+        !g.isMutable(), llvm::GlobalValue::ExternalLinkage, init, g.debugName());
+}
 
-void LLVMEmitter::emitFunction(IRFunction* fn) {
-    auto it = fnMap_.find(std::string(fn->name()));
-    VEX_ASSERT(it != fnMap_.end(), "Function not pre-declared");
-    llvm::Function* llvmFn = it->second;
+void LLVMEmitter::emitFunction(const IRFunction& fn) {
+    auto* llvmFn = llvmMod_.getFunction(fn.name());
+    if (!llvmFn) llvmFn = declareFn(fn);
 
-    // Rebuild function type with actual params
-    std::vector<llvm::Type*> paramTypes(fn->params().size(), intType(64));
-    auto* fnType = llvm::FunctionType::get(intType(64), paramTypes, false);
-
-    // Replace the placeholder function
-    llvmFn->eraseFromParent();
-    llvmFn = llvm::Function::Create(
-        fnType,
-        llvm::Function::ExternalLinkage,
-        std::string(fn->name()),
-        llvmMod_.get());
-    fnMap_[std::string(fn->name())] = llvmFn;
-
-    // Create LLVM basic blocks for all VexIR blocks first
+    valueMap_.clear();
     blockMap_.clear();
-    for (auto& irBB : fn->blocks()) {
-        auto* llvmBB = llvm::BasicBlock::Create(
-            llvmCtx_,
-            std::string(irBB->label()),
-            llvmFn);
-        blockMap_[irBB.get()] = llvmBB;
-    }
 
-    // Map params
-    auto llvmArgIt = llvmFn->arg_begin();
-    for (auto& param : fn->params()) {
-        llvmArgIt->setName(std::string(param->name()));
-        valueMap_[param.get()] = &*llvmArgIt;
-        ++llvmArgIt;
+    // Map params → LLVM args
+    size_t idx = 0;
+    for (auto& arg : llvmFn->args()) {
+        if (idx < fn.params().size())
+            valueMap_[fn.params()[idx].get()] = &arg;
+        ++idx;
     }
-
-    // Emit each block
-    for (auto& irBB : fn->blocks())
-        emitBlock(irBB.get(), llvmFn);
+    // Create basic blocks
+    for (const auto& blk : fn.blocks()) {
+        auto* bb = llvm::BasicBlock::Create(ctx_, blk->label(), llvmFn);
+        blockMap_[blk.get()] = bb;
+    }
+    // Emit instructions per block
+    for (const auto& blk : fn.blocks())
+        emitBlock(*blk);
 }
 
-void LLVMEmitter::emitBlock(IRBlock* irBB, llvm::Function* /*llvmFn*/) {
-    auto* llvmBB = blockMap_[irBB];
-    builder_.SetInsertPoint(llvmBB);
-
-    for (auto& instr : irBB->instrs()) {
-        auto* val = emitInstr(instr.get());
-        if (val) valueMap_[instr.get()] = val;
+void LLVMEmitter::emitBlock(const IRBlock& blk) {
+    auto* bb = lookupBlock(&blk);
+    if (!bb) return;
+    builder_.SetInsertPoint(bb);
+    for (const auto& instr : blk.instrs()) {
+        llvm::Value* v = emitInstr(*instr);
+        if (v) valueMap_[instr.get()] = v;
     }
 }
 
-llvm::Value* LLVMEmitter::emitInstr(IRInstr* instr) {
-    switch (instr->kind()) {
-        case IRInstrKind::Return:       return emitReturn(static_cast<IRReturnInstr*>(instr));
-        case IRInstrKind::Br:           return emitBr(static_cast<IRBrInstr*>(instr));
-        case IRInstrKind::CondBr:       return emitCondBr(static_cast<IRCondBrInstr*>(instr));
-        case IRInstrKind::Alloca:       return emitAlloca(static_cast<IRAllocaInstr*>(instr));
-        case IRInstrKind::Store:        return emitStore(static_cast<IRStoreInstr*>(instr));
-        case IRInstrKind::Load:         return emitLoad(static_cast<IRLoadInstr*>(instr));
-        case IRInstrKind::Call:         return emitCall(static_cast<IRCallInstr*>(instr));
-        case IRInstrKind::BinOp:        return emitBinOp(static_cast<IRBinOpInstr*>(instr));
-        case IRInstrKind::UnaryOp:      return emitUnaryOp(static_cast<IRUnaryOpInstr*>(instr));
-        case IRInstrKind::Cmp:          return emitCmp(static_cast<IRCmpInstr*>(instr));
-        case IRInstrKind::Gep:          return emitGep(static_cast<IRGepInstr*>(instr));
-        case IRInstrKind::Index:        return emitIndex(static_cast<IRIndexInstr*>(instr));
-        case IRInstrKind::Phi:          return emitPhi(static_cast<IRPhiInstr*>(instr));
-        case IRInstrKind::IntConst:     return emitIntConst(static_cast<IRIntConstInstr*>(instr));
-        case IRInstrKind::FloatConst:   return emitFloatConst(static_cast<IRFloatConstInstr*>(instr));
-        case IRInstrKind::BoolConst:    return emitBoolConst(static_cast<IRBoolConstInstr*>(instr));
-        case IRInstrKind::StringConst:  return emitStringConst(static_cast<IRStringConstInstr*>(instr));
-        case IRInstrKind::Const:        return emitConst(static_cast<IRConstInstr*>(instr));
-        case IRInstrKind::Cast:         return emitCast(static_cast<IRCastInstr*>(instr));
-        default:
-            // Unimplemented instructions return undef
-            return llvm::UndefValue::get(intType(64));
+llvm::Value* LLVMEmitter::emitInstr(const IRInstr& i) {
+    switch (i.kind()) {
+    case IRInstrKind::Return:    return emitControl(i);
+    case IRInstrKind::Br:        return emitControl(i);
+    case IRInstrKind::CondBr:    return emitControl(i);
+    case IRInstrKind::Alloca:    return emitMemory(i);
+    case IRInstrKind::Load:      return emitMemory(i);
+    case IRInstrKind::Store:     return emitMemory(i);
+    case IRInstrKind::Gep:       return emitMemory(i);
+    case IRInstrKind::Call:      return emitCall(i);
+    case IRInstrKind::BinOp:     return emitArith(i);
+    case IRInstrKind::UnaryOp:   return emitArith(i);
+    case IRInstrKind::Cmp:       return emitCmp(i);
+    case IRInstrKind::Cast:      return emitConvert(i);
+    case IRInstrKind::Phi:       return emitPhi(i);
+    case IRInstrKind::IntConst:
+    case IRInstrKind::FloatConst:
+    case IRInstrKind::BoolConst:
+    case IRInstrKind::StringConst:
+    case IRInstrKind::Const:     return emitConst(i);
+    case IRInstrKind::Unreachable: return builder_.CreateUnreachable();
+    default:                     return nullptr;
     }
 }
 
-// ── Terminators ───────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitReturn(IRReturnInstr* i) {
-    if (!i->value() || !valueMap_.count(i->value()))
-        return builder_.CreateRetVoid();
-    return builder_.CreateRet(lookup(i->value()));
+llvm::Value* LLVMEmitter::emitConst(const IRValue& v) {
+    const auto& i = static_cast<const IRInstr&>(v);
+    switch (i.kind()) {
+    case IRInstrKind::IntConst:
+        return llvm::ConstantInt::get(typeMap_.i64Ty(),
+            static_cast<const IRIntConstInstr&>(i).value(), true);
+    case IRInstrKind::FloatConst:
+        return llvm::ConstantFP::get(typeMap_.f64Ty(),
+            static_cast<const IRFloatConstInstr&>(i).value());
+    case IRInstrKind::BoolConst:
+        return llvm::ConstantInt::get(typeMap_.boolTy(),
+            static_cast<const IRBoolConstInstr&>(i).value() ? 1 : 0);
+    case IRInstrKind::StringConst:
+        return builder_.CreateGlobalString(
+            static_cast<const IRStringConstInstr&>(i).value(), ".str");
+    case IRInstrKind::Const: {
+        const auto& cc = static_cast<const IRConstInstr&>(i);
+        switch (cc.constKind()) {
+        case IRConstKind::Null:  return llvm::ConstantPointerNull::get(typeMap_.ptrTy());
+        case IRConstKind::Undef: return llvm::UndefValue::get(typeMap_.i64Ty());
+        default:                 return llvm::UndefValue::get(typeMap_.i64Ty());
+        }
+    }
+    default: return llvm::UndefValue::get(typeMap_.i64Ty());
+    }
 }
 
-llvm::Value* LLVMEmitter::emitBr(IRBrInstr* i) {
-    auto* target = blockMap_[i->target()];
-    VEX_ASSERT(target, "IRBrInstr: target block not mapped");
-    return builder_.CreateBr(target);
+llvm::Value* LLVMEmitter::emitArith(const IRInstr& i) {
+    if (i.kind() == IRInstrKind::BinOp) {
+        const auto& b = static_cast<const IRBinOpInstr&>(i);
+        llvm::Value* lhs = lookup(b.lhs());
+        llvm::Value* rhs = lookup(b.rhs());
+        if (!lhs || !rhs) return llvm::UndefValue::get(typeMap_.i64Ty());
+        bool fp = lhs->getType()->isFloatingPointTy();
+        switch (b.op()) {
+        case TokenKind::Plus:    return fp ? builder_.CreateFAdd(lhs,rhs) : builder_.CreateAdd(lhs,rhs);
+        case TokenKind::Minus:   return fp ? builder_.CreateFSub(lhs,rhs) : builder_.CreateSub(lhs,rhs);
+        case TokenKind::Star:    return fp ? builder_.CreateFMul(lhs,rhs) : builder_.CreateMul(lhs,rhs);
+        case TokenKind::Slash:   return fp ? builder_.CreateFDiv(lhs,rhs) : builder_.CreateSDiv(lhs,rhs);
+        case TokenKind::Percent: return builder_.CreateSRem(lhs,rhs);
+        case TokenKind::Amp:     return builder_.CreateAnd(lhs,rhs);
+        case TokenKind::Pipe:    return builder_.CreateOr(lhs,rhs);
+        case TokenKind::Caret:   return builder_.CreateXor(lhs,rhs);
+        case TokenKind::LShift:  return builder_.CreateShl(lhs,rhs);
+        case TokenKind::RShift:  return builder_.CreateAShr(lhs,rhs);
+        case TokenKind::AmpAmp:  return builder_.CreateAnd(lhs,rhs);
+        case TokenKind::PipePipe:return builder_.CreateOr(lhs,rhs);
+        default: return llvm::UndefValue::get(lhs->getType());
+        }
+    }
+    // UnaryOp
+    const auto& u = static_cast<const IRUnaryOpInstr&>(i);
+    llvm::Value* v = lookup(u.operand());
+    if (!v) return llvm::UndefValue::get(typeMap_.i64Ty());
+    switch (u.op()) {
+    case TokenKind::Minus: return v->getType()->isFloatingPointTy()
+                               ? builder_.CreateFNeg(v) : builder_.CreateNeg(v);
+    case TokenKind::Bang:  return builder_.CreateNot(v);
+    case TokenKind::Tilde: return builder_.CreateNot(v);
+    default:               return v;
+    }
 }
 
-llvm::Value* LLVMEmitter::emitCondBr(IRCondBrInstr* i) {
-    auto* cond   = lookup(i->cond());
-    auto* thenBB = blockMap_[i->thenBB()];
-    auto* elseBB = blockMap_[i->elseBB()];
-    VEX_ASSERT(thenBB && elseBB, "IRCondBrInstr: block not mapped");
-    // Ensure cond is i1
-    if (cond->getType() != boolType())
-        cond = builder_.CreateICmpNE(cond,
-                   llvm::ConstantInt::get(cond->getType(), 0));
-    return builder_.CreateCondBr(cond, thenBB, elseBB);
+llvm::Value* LLVMEmitter::emitCmp(const IRInstr& i) {
+    const auto& c = static_cast<const IRCmpInstr&>(i);
+    llvm::Value* lhs = lookup(c.lhs());
+    llvm::Value* rhs = lookup(c.rhs());
+    if (!lhs || !rhs) return llvm::ConstantInt::getFalse(ctx_);
+    bool fp = lhs->getType()->isFloatingPointTy();
+    switch (c.op()) {
+    case IRCmpOp::Eq:  return fp ? builder_.CreateFCmpOEQ(lhs,rhs) : builder_.CreateICmpEQ(lhs,rhs);
+    case IRCmpOp::NEq: return fp ? builder_.CreateFCmpONE(lhs,rhs) : builder_.CreateICmpNE(lhs,rhs);
+    case IRCmpOp::Lt:  return fp ? builder_.CreateFCmpOLT(lhs,rhs) : builder_.CreateICmpSLT(lhs,rhs);
+    case IRCmpOp::Lte: return fp ? builder_.CreateFCmpOLE(lhs,rhs) : builder_.CreateICmpSLE(lhs,rhs);
+    case IRCmpOp::Gt:  return fp ? builder_.CreateFCmpOGT(lhs,rhs) : builder_.CreateICmpSGT(lhs,rhs);
+    case IRCmpOp::Gte: return fp ? builder_.CreateFCmpOGE(lhs,rhs) : builder_.CreateICmpSGE(lhs,rhs);
+    default: return llvm::ConstantInt::getFalse(ctx_);
+    }
 }
 
-// ── Memory ────────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitAlloca(IRAllocaInstr* i) {
-    // Save + restore insertion point to insert allocas in entry block
-    auto* currBB = builder_.GetInsertBlock();
-    auto* fn     = currBB->getParent();
-    auto& entryBB = fn->getEntryBlock();
-    builder_.SetInsertPoint(&entryBB, entryBB.begin());
-    auto* alloca = builder_.CreateAlloca(intType(64), nullptr,
-                                         std::string(i->varName()));
-    builder_.SetInsertPoint(currBB);
-    return alloca;
+llvm::Value* LLVMEmitter::emitMemory(const IRInstr& i) {
+    switch (i.kind()) {
+    case IRInstrKind::Alloca: {
+        const auto& a = static_cast<const IRAllocaInstr&>(i);
+        return builder_.CreateAlloca(typeMap_.i64Ty(), nullptr, a.varName());
+    }
+    case IRInstrKind::Load: {
+        llvm::Value* ptr = lookup(static_cast<const IRLoadInstr&>(i).ptr());
+        if (!ptr) return llvm::UndefValue::get(typeMap_.i64Ty());
+        return builder_.CreateLoad(typeMap_.i64Ty(), ptr, "load");
+    }
+    case IRInstrKind::Store: {
+        const auto& s = static_cast<const IRStoreInstr&>(i);
+        llvm::Value* val = lookup(s.val());
+        llvm::Value* ptr = lookup(s.ptr());
+        if (!val || !ptr) return nullptr;
+        return builder_.CreateStore(val, ptr);
+    }
+    case IRInstrKind::Gep: {
+        llvm::Value* base = lookup(static_cast<const IRGepInstr&>(i).base());
+        if (!base) return llvm::UndefValue::get(typeMap_.ptrTy());
+        llvm::Value* zero = llvm::ConstantInt::get(typeMap_.i32Ty(), 0);
+        return builder_.CreateGEP(typeMap_.i8Ty(), base, {zero}, "gep");
+    }
+    default: return nullptr;
+    }
 }
 
-llvm::Value* LLVMEmitter::emitStore(IRStoreInstr* i) {
-    auto* ptr = lookup(i->ptr());
-    auto* val = lookup(i->val());
-    if (!ptr || !val) return nullptr;
-    // Cast val to match ptr element type if needed
-    return builder_.CreateStore(val, ptr);
+llvm::Value* LLVMEmitter::emitControl(const IRInstr& i) {
+    switch (i.kind()) {
+    case IRInstrKind::Return: {
+        const auto& r = static_cast<const IRReturnInstr&>(i);
+        if (!r.value()) {
+            // If function return type is void, ret void; else ret 0
+            llvm::Function* f = builder_.GetInsertBlock()->getParent();
+            if (f && !f->getReturnType()->isVoidTy())
+                return builder_.CreateRet(llvm::Constant::getNullValue(f->getReturnType()));
+            return builder_.CreateRetVoid();
+        }
+        llvm::Value* v = lookup(r.value());
+        if (!v) return builder_.CreateRetVoid();
+        llvm::Function* f = builder_.GetInsertBlock()->getParent();
+        if (f && v->getType() != f->getReturnType()) {
+            if (f->getReturnType()->isVoidTy()) return builder_.CreateRetVoid();
+            v = builder_.CreateIntCast(v, f->getReturnType(), true, "retcast");
+        }
+        return builder_.CreateRet(v);
+    }
+    case IRInstrKind::Br: {
+        llvm::BasicBlock* dest = lookupBlock(static_cast<const IRBrInstr&>(i).target());
+        return dest ? builder_.CreateBr(dest) : nullptr;
+    }
+    case IRInstrKind::CondBr: {
+        const auto& cb = static_cast<const IRCondBrInstr&>(i);
+        llvm::Value* cond   = lookup(cb.cond());
+        llvm::BasicBlock* t = lookupBlock(cb.thenBB());
+        llvm::BasicBlock* f = lookupBlock(cb.elseBB());
+        if (!cond || !t || !f) return nullptr;
+        return builder_.CreateCondBr(cond, t, f);
+    }
+    default: return nullptr;
+    }
 }
 
-llvm::Value* LLVMEmitter::emitLoad(IRLoadInstr* i) {
-    auto* ptr = lookup(i->ptr());
-    if (!ptr) return llvm::UndefValue::get(intType(64));
-    return builder_.CreateLoad(intType(64), ptr);
-}
-
-// ── Call ──────────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitCall(IRCallInstr* i) {
+llvm::Value* LLVMEmitter::emitCall(const IRInstr& i) {
+    const auto& c = static_cast<const IRCallInstr&>(i);
+    llvm::Function* fn = llvmMod_.getFunction(c.calleeName());
+    if (!fn) {
+        auto* fty = llvm::FunctionType::get(typeMap_.i64Ty(), {}, true);
+        fn = llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
+                                     c.calleeName(), llvmMod_);
+    }
     std::vector<llvm::Value*> args;
-    for (auto* arg : i->args()) {
-        auto* v = valueMap_.count(arg) ? valueMap_[arg]
-                                       : llvm::UndefValue::get(intType(64));
-        args.push_back(v);
+    for (auto* a : c.args()) {
+        llvm::Value* v = lookup(a);
+        if (v) args.push_back(v);
     }
-
-    if (i->hasNamedCallee()) {
-        // Look up in runtime or declared functions
-        std::string name(i->calleeName());
-        llvm::Function* fn = llvmMod_->getFunction(name);
-        if (!fn) fn = getRuntimeFn(name);
-        if (!fn) {
-            // Forward declare as i64(...) so we can still link
-            auto* fty = llvm::FunctionType::get(intType(64), {}, true);
-            fn = llvm::Function::Create(fty,
-                     llvm::Function::ExternalLinkage, name, llvmMod_.get());
-        }
-        return builder_.CreateCall(fn, args);
-    } else {
-        auto* calleeVal = lookup(i->calleeVal());
-        if (!calleeVal) return llvm::UndefValue::get(intType(64));
-        auto* fty = llvm::FunctionType::get(intType(64), {}, true);
-        return builder_.CreateCall(fty, calleeVal, args);
+    auto* fty = fn->getFunctionType();
+    if (!fty->isVarArg()) {
+        while (args.size() > fty->getNumParams()) args.pop_back();
+        while (args.size() < fty->getNumParams())
+            args.push_back(llvm::UndefValue::get(fty->getParamType((unsigned)args.size())));
     }
+    return builder_.CreateCall(fty, fn, args);
 }
 
-// ── Arithmetic ────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitBinOp(IRBinOpInstr* i) {
-    auto* lhs = lookup(i->lhs());
-    auto* rhs = lookup(i->rhs());
-    if (!lhs || !rhs) return llvm::UndefValue::get(intType(64));
-
-    switch (i->op()) {
-        case TokenKind::Plus:      return builder_.CreateAdd(lhs, rhs, "add");
-        case TokenKind::Minus:     return builder_.CreateSub(lhs, rhs, "sub");
-        case TokenKind::Star:      return builder_.CreateMul(lhs, rhs, "mul");
-        case TokenKind::Slash:     return builder_.CreateSDiv(lhs, rhs, "div");
-        case TokenKind::Percent:   return builder_.CreateSRem(lhs, rhs, "rem");
-        case TokenKind::StarStar:  {
-            // Emit call to llvm.powi or runtime pow
-            auto* powFn = getRuntimeFn("__vex_pow_int");
-            if (powFn) return builder_.CreateCall(powFn, {lhs, rhs});
-            return builder_.CreateMul(lhs, rhs); // fallback
-        }
-        case TokenKind::Amp:       return builder_.CreateAnd(lhs, rhs, "and");
-        case TokenKind::Pipe:      return builder_.CreateOr(lhs, rhs, "or");
-        case TokenKind::Caret:     return builder_.CreateXor(lhs, rhs, "xor");
-        case TokenKind::LShift:    return builder_.CreateShl(lhs, rhs, "shl");
-        case TokenKind::RShift:    return builder_.CreateAShr(lhs, rhs, "ashr");
-        case TokenKind::URShift:   return builder_.CreateLShr(lhs, rhs, "lshr");
-        case TokenKind::AmpAmp:
-        case TokenKind::KW_and:    return builder_.CreateAnd(lhs, rhs, "land");
-        case TokenKind::PipePipe:
-        case TokenKind::KW_or:     return builder_.CreateOr(lhs, rhs, "lor");
-        // Wrapping arithmetic
-        case TokenKind::WrapAdd:   return builder_.CreateAdd(lhs, rhs, "wrapadd",
-                                                              /*NUW*/true, /*NSW*/false);
-        case TokenKind::WrapSub:   return builder_.CreateSub(lhs, rhs, "wrapsub",
-                                                              true, false);
-        case TokenKind::WrapMul:   return builder_.CreateMul(lhs, rhs, "wrapmul",
-                                                              true, false);
-        // Saturating: emit runtime calls
-        case TokenKind::SatAdd: {
-            auto* fn = getRuntimeFn("__vex_sat_add_i64");
-            if (fn) return builder_.CreateCall(fn, {lhs, rhs});
-            return builder_.CreateAdd(lhs, rhs);
-        }
-        case TokenKind::SatSub: {
-            auto* fn = getRuntimeFn("__vex_sat_sub_i64");
-            if (fn) return builder_.CreateCall(fn, {lhs, rhs});
-            return builder_.CreateSub(lhs, rhs);
-        }
-        case TokenKind::SatMul: {
-            auto* fn = getRuntimeFn("__vex_sat_mul_i64");
-            if (fn) return builder_.CreateCall(fn, {lhs, rhs});
-            return builder_.CreateMul(lhs, rhs);
-        }
-        default:
-            return llvm::UndefValue::get(intType(64));
-    }
+llvm::Value* LLVMEmitter::emitConvert(const IRInstr& i) {
+    const auto& c = static_cast<const IRCastInstr&>(i);
+    llvm::Value* v = lookup(c.val());
+    if (!v) return llvm::UndefValue::get(typeMap_.i64Ty());
+    llvm::Type* dst = c.targetType() ? typeMap_.map(c.targetType()) : typeMap_.i64Ty();
+    if (v->getType() == dst) return v;
+    if (v->getType()->isIntegerTy() && dst->isIntegerTy())
+        return builder_.CreateIntCast(v, dst, true, "icast");
+    if (v->getType()->isFloatingPointTy() && dst->isFloatingPointTy())
+        return builder_.CreateFPCast(v, dst, "fcast");
+    if (v->getType()->isIntegerTy() && dst->isFloatingPointTy())
+        return builder_.CreateSIToFP(v, dst, "i2f");
+    if (v->getType()->isFloatingPointTy() && dst->isIntegerTy())
+        return builder_.CreateFPToSI(v, dst, "f2i");
+    return builder_.CreateBitOrPointerCast(v, dst, "bitcast");
 }
 
-llvm::Value* LLVMEmitter::emitUnaryOp(IRUnaryOpInstr* i) {
-    auto* operand = lookup(i->operand());
-    if (!operand) return llvm::UndefValue::get(intType(64));
-
-    switch (i->op()) {
-        case TokenKind::Minus:
-            return builder_.CreateNeg(operand, "neg");
-        case TokenKind::Bang:
-        case TokenKind::KW_not:
-            return builder_.CreateNot(operand, "not");
-        case TokenKind::Tilde:
-            return builder_.CreateNot(operand, "bitnot");
-        case TokenKind::PlusPlus: {
-            auto* one  = llvm::ConstantInt::get(intType(64), 1);
-            auto* newv = builder_.CreateAdd(operand, one, "inc");
-            // For postfix: return old value; for prefix: return new value
-            return i->isPostfix() ? operand : newv;
-        }
-        case TokenKind::MinusMinus: {
-            auto* one  = llvm::ConstantInt::get(intType(64), 1);
-            auto* newv = builder_.CreateSub(operand, one, "dec");
-            return i->isPostfix() ? operand : newv;
-        }
-        default:
-            return operand;
-    }
-}
-
-// ── Comparison ────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitCmp(IRCmpInstr* i) {
-    auto* lhs = lookup(i->lhs());
-    auto* rhs = lookup(i->rhs());
-    if (!lhs || !rhs) return llvm::ConstantInt::getFalse(llvmCtx_);
-
-    switch (i->op()) {
-        case IRCmpOp::Eq:  return builder_.CreateICmpEQ(lhs, rhs, "eq");
-        case IRCmpOp::NEq: return builder_.CreateICmpNE(lhs, rhs, "ne");
-        case IRCmpOp::Lt:  return builder_.CreateICmpSLT(lhs, rhs, "lt");
-        case IRCmpOp::Lte: return builder_.CreateICmpSLE(lhs, rhs, "le");
-        case IRCmpOp::Gt:  return builder_.CreateICmpSGT(lhs, rhs, "gt");
-        case IRCmpOp::Gte: return builder_.CreateICmpSGE(lhs, rhs, "ge");
-    }
-    return llvm::ConstantInt::getFalse(llvmCtx_);
-}
-
-// ── Access ────────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitGep(IRGepInstr* i) {
-    auto* base = lookup(i->base());
-    if (!base) return llvm::UndefValue::get(intType(64));
-    // Simple GEP: treat base as pointer to struct, field offset = 0 for now
-    // Full implementation requires type information from sema
-    return base;
-}
-
-llvm::Value* LLVMEmitter::emitIndex(IRIndexInstr* i) {
-    auto* base = lookup(i->base());
-    auto* idx  = lookup(i->idx());
-    if (!base || !idx) return llvm::UndefValue::get(intType(64));
-    // Emit bounds-checked index via runtime call
-    auto* fn = getRuntimeFn("__vex_list_get");
-    if (fn) return builder_.CreateCall(fn, {base, idx});
-    return builder_.CreateAdd(base, idx); // fallback placeholder
-}
-
-// ── SSA ───────────────────────────────────────────────────────────────────────
-
-llvm::Value* LLVMEmitter::emitPhi(IRPhiInstr* i) {
-    auto* phi = builder_.CreatePHI(intType(64),
-                                    static_cast<unsigned>(i->incoming().size()),
-                                    "phi");
-    for (auto& [irVal, irBB] : i->incoming()) {
-        auto* llvmVal = valueMap_.count(irVal) ? valueMap_[irVal]
-                                               : llvm::UndefValue::get(intType(64));
-        auto* llvmBB  = blockMap_.count(irBB) ? blockMap_[irBB] : nullptr;
-        if (llvmBB)
-            phi->addIncoming(llvmVal, llvmBB);
+llvm::Value* LLVMEmitter::emitPhi(const IRInstr& i) {
+    const auto& ph = static_cast<const IRPhiInstr&>(i);
+    auto* phi = builder_.CreatePHI(typeMap_.i64Ty(), (unsigned)ph.incoming().size(), "phi");
+    for (const auto& [val, blk] : ph.incoming()) {
+        llvm::Value* v = lookup(val);
+        llvm::BasicBlock* bb = lookupBlock(blk);
+        if (v && bb) phi->addIncoming(v, bb);
     }
     return phi;
 }
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+llvm::Value* LLVMEmitter::emitAggregate(const IRInstr&) { return nullptr; }
+llvm::Value* LLVMEmitter::emitAtomic(const IRInstr&)    { return nullptr; }
 
-llvm::Value* LLVMEmitter::emitIntConst(IRIntConstInstr* i) {
-    // Choose LLVM integer type based on suffix
-    llvm::Type* ty;
-    switch (i->suffix()) {
-        case IntSuffix::u8:  case IntSuffix::i8:   ty = intType(8);   break;
-        case IntSuffix::u16: case IntSuffix::i16:  ty = intType(16);  break;
-        case IntSuffix::u32: case IntSuffix::i32:  ty = intType(32);  break;
-        default:                                    ty = intType(64);  break;
-    }
-    return llvm::ConstantInt::get(ty, i->value(), /*isSigned=*/true);
-}
-
-llvm::Value* LLVMEmitter::emitFloatConst(IRFloatConstInstr* i) {
-    llvm::Type* ty = (i->suffix() == FloatSuffix::f)
-                     ? floatType(true) : floatType(false);
-    return llvm::ConstantFP::get(ty, i->value());
-}
-
-llvm::Value* LLVMEmitter::emitBoolConst(IRBoolConstInstr* i) {
-    return llvm::ConstantInt::get(boolType(), i->value() ? 1 : 0);
-}
-
-llvm::Value* LLVMEmitter::emitStringConst(IRStringConstInstr* i) {
-    // Create a global constant string and return a fat pointer struct
-    auto* strConst = builder_.CreateGlobalStringPtr(
-        std::string(i->value()), ".str");
-    auto* lenVal   = llvm::ConstantInt::get(intType(64), i->value().size());
-
-    // Build { i8*, i64 } struct
-    auto* strTy = strType();
-    auto* agg   = llvm::UndefValue::get(strTy);
-    auto* withPtr = builder_.CreateInsertValue(agg,  strConst, {0});
-    auto* withLen = builder_.CreateInsertValue(withPtr, lenVal,  {1});
-    return withLen;
-}
-
-llvm::Value* LLVMEmitter::emitConst(IRConstInstr* i) {
-    switch (i->constKind()) {
-        case IRConstKind::Null:  return llvm::ConstantPointerNull::get(
-                                     llvm::PointerType::get(llvmCtx_, 0));
-        case IRConstKind::Void:  return nullptr;
-        case IRConstKind::Undef: return llvm::UndefValue::get(intType(64));
-    }
+llvm::Value* LLVMEmitter::lookup(const IRValue* v) {
+    if (!v) return nullptr;
+    auto it = valueMap_.find(v);
+    if (it != valueMap_.end()) return it->second;
+    if (v->kind() == IRValueKind::Instruction)
+        return emitConst(static_cast<const IRInstr&>(*v));
     return nullptr;
 }
 
-llvm::Value* LLVMEmitter::emitCast(IRCastInstr* i) {
-    auto* val = lookup(i->val());
-    if (!val) return llvm::UndefValue::get(intType(64));
-    // Type-directed cast; full implementation requires sema type info
-    return builder_.CreateBitOrPointerCast(val, intType(64), "cast");
-}
-
-// ── Type helpers ──────────────────────────────────────────────────────────────
-
-llvm::Type* LLVMEmitter::intType(unsigned bits) {
-    return llvm::IntegerType::get(llvmCtx_, bits);
-}
-
-llvm::Type* LLVMEmitter::floatType(bool is32bit) {
-    return is32bit ? llvm::Type::getFloatTy(llvmCtx_)
-                   : llvm::Type::getDoubleTy(llvmCtx_);
-}
-
-llvm::Type* LLVMEmitter::boolType() {
-    return llvm::IntegerType::get(llvmCtx_, 1);
-}
-
-llvm::Type* LLVMEmitter::voidType() {
-    return llvm::Type::getVoidTy(llvmCtx_);
-}
-
-llvm::Type* LLVMEmitter::ptrType() {
-    return llvm::PointerType::get(llvmCtx_, 0); // opaque ptr
-}
-
-llvm::Type* LLVMEmitter::strType() {
-    // { i8*, i64 }
-    return llvm::StructType::get(llvmCtx_, {ptrType(), intType(64)});
-}
-
-llvm::Type* LLVMEmitter::listType() {
-    // { i8*, i64, i64 }
-    return llvm::StructType::get(llvmCtx_,
-                                  {ptrType(), intType(64), intType(64)});
-}
-
-llvm::Type* LLVMEmitter::mapType(TypeNode* /*type*/) {
-    return intType(64); // placeholder
-}
-
-// ── Runtime function declarations ─────────────────────────────────────────────
-
-void LLVMEmitter::declareRuntimeFunctions() {
-    // vex_rt memory
-    {
-        auto* fty = llvm::FunctionType::get(ptrType(),
-                    {intType(64), intType(64)}, false);
-        runtimeFns_["vex_alloc"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_alloc", llvmMod_.get());
-    }
-    {
-        auto* fty = llvm::FunctionType::get(voidType(), {ptrType()}, false);
-        runtimeFns_["vex_free"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_free", llvmMod_.get());
-    }
-    // vex_rt panic
-    {
-        auto* fty = llvm::FunctionType::get(voidType(),
-                    {ptrType(), ptrType(), intType(32)}, false);
-        auto* fn  = llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                            "vex_panic", llvmMod_.get());
-        fn->addFnAttr(llvm::Attribute::NoReturn);
-        runtimeFns_["vex_panic"] = fn;
-    }
-    // vex_rt io
-    {
-        // VexStr = { i8*, i64 }
-        auto* strTy = strType();
-        auto* fty   = llvm::FunctionType::get(voidType(), {strTy}, false);
-        runtimeFns_["vex_println"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_println", llvmMod_.get());
-        runtimeFns_["vex_print"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_print", llvmMod_.get());
-    }
-    // vex_rt ARC
-    {
-        auto* fty = llvm::FunctionType::get(ptrType(),
-                    {ptrType(), intType(64), intType(64), ptrType()}, false);
-        runtimeFns_["vex_arc_alloc"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_arc_alloc", llvmMod_.get());
-    }
-    {
-        auto* fty = llvm::FunctionType::get(ptrType(), {ptrType()}, false);
-        runtimeFns_["vex_arc_clone"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_arc_clone", llvmMod_.get());
-    }
-    {
-        auto* fty = llvm::FunctionType::get(voidType(), {ptrType()}, false);
-        runtimeFns_["vex_arc_drop"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "vex_arc_drop", llvmMod_.get());
-    }
-    // Internal helpers
-    {
-        auto* fty = llvm::FunctionType::get(intType(64),
-                    {intType(64), intType(64)}, false);
-        runtimeFns_["__vex_pow_int"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__vex_pow_int", llvmMod_.get());
-        runtimeFns_["__vex_sat_add_i64"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__vex_sat_add_i64", llvmMod_.get());
-        runtimeFns_["__vex_sat_sub_i64"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__vex_sat_sub_i64", llvmMod_.get());
-        runtimeFns_["__vex_sat_mul_i64"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__vex_sat_mul_i64", llvmMod_.get());
-    }
-    // List access
-    {
-        auto* fty = llvm::FunctionType::get(intType(64),
-                    {ptrType(), intType(64)}, false);
-        runtimeFns_["__vex_list_get"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__vex_list_get", llvmMod_.get());
-    }
-    // Pattern matching helper
-    {
-        auto* fty = llvm::FunctionType::get(boolType(), {ptrType()}, false);
-        runtimeFns_["__pattern_match"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__pattern_match", llvmMod_.get());
-    }
-    // Result helpers
-    {
-        auto* fty = llvm::FunctionType::get(boolType(), {intType(64)}, false);
-        runtimeFns_["__result_is_ok"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__result_is_ok", llvmMod_.get());
-    }
-    {
-        auto* fty = llvm::FunctionType::get(intType(64), {intType(64)}, false);
-        runtimeFns_["__result_ok"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__result_ok", llvmMod_.get());
-        runtimeFns_["__result_err"] =
-            llvm::Function::Create(fty, llvm::Function::ExternalLinkage,
-                                   "__result_err", llvmMod_.get());
-    }
-}
-
-llvm::Function* LLVMEmitter::getRuntimeFn(const std::string& name) {
-    auto it = runtimeFns_.find(name);
-    if (it != runtimeFns_.end()) return it->second;
-    return llvmMod_->getFunction(name);
-}
-
-llvm::Value* LLVMEmitter::lookup(IRValue* val) {
-    if (!val) return nullptr;
-    auto it = valueMap_.find(val);
-    if (it != valueMap_.end()) return it->second;
-    // Might be a constant we can reconstruct
-    return llvm::UndefValue::get(intType(64));
+llvm::BasicBlock* LLVMEmitter::lookupBlock(const IRBlock* b) {
+    if (!b) return nullptr;
+    auto it = blockMap_.find(b);
+    return it != blockMap_.end() ? it->second : nullptr;
 }
 
 } // namespace vex

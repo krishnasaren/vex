@@ -16,7 +16,7 @@
 
 namespace vex {
 
-struct FileEntry {
+struct FileManagerEntry {
     uint32_t    id;
     std::string path;
     std::unique_ptr<MemoryBuffer> buffer;
@@ -27,21 +27,21 @@ public:
     FileManager() = default;
 
     // Load a file from disk; returns null on error
-    const FileEntry* open(std::string_view path);
+    const FileManagerEntry* open(std::string_view path);
 
     // Register a virtual file (e.g. from a string in tests)
-    const FileEntry* openVirtual(std::string_view name, std::string contents);
+    const FileManagerEntry* openVirtual(std::string_view name, std::string contents);
 
-    const FileEntry* getById(uint32_t id) const;
-    const FileEntry* getByPath(std::string_view path) const;
+    const FileManagerEntry* getById(uint32_t id) const;
+    const FileManagerEntry* getByPath(std::string_view path) const;
 
     // All loaded files
-    const std::vector<std::unique_ptr<FileEntry>>& files() const { return files_; }
+    const std::vector<std::unique_ptr<FileManagerEntry>>& files() const { return files_; }
 
 private:
-    std::vector<std::unique_ptr<FileEntry>>          files_;
-    std::unordered_map<std::string, FileEntry*>      byPath_;
-    std::unordered_map<uint32_t,    FileEntry*>      byId_;
+    std::vector<std::unique_ptr<FileManagerEntry>>          files_;
+    std::unordered_map<std::string, FileManagerEntry*>      byPath_;
+    std::unordered_map<uint32_t,    FileManagerEntry*>      byId_;
     uint32_t                                          nextId_ = 1;
 };
 

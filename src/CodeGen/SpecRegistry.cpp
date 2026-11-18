@@ -1,1 +1,3 @@
-// src/CodeGen/SpecRegistry.cpp
+// src/CodeGen/SpecRegistry.cpp — stub
+#include "vex/CodeGen/SpecRegistry.h"
+namespace vex {}

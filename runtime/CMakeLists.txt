@@ -1,70 +1,54 @@
-cmake_minimum_required(VERSION 3.20)
+# VEX Runtime Library
+project(vex_rt C CXX)
 
-if(NOT VEX_BUILD_RUNTIME)
-    return()
-endif()
-
-# Runtime C sources
-set(VEX_RT_SOURCES
-    src/alloc.c
-    src/arc.c
-    src/arena.c
-    src/panic.c
-    src/io.c
-    src/init.c
-    src/signal.c
-    src/stackguard.c
-    src/sync.c
-    src/thread.c
-    src/tls.c
-    src/typeid.c
-    src/waker.c
-    src/workstealing.c
-    src/executor.c
-    src/async.c
-    src/channel.c
+set(VEX_RUNTIME_SOURCES
+  src/vex_alloc.c
+  src/vex_panic.c
+  src/vex_io.c
+  src/vex_string.c
+  src/vex_array.c
+  src/vex_map.c
+  src/vex_result.c
+  src/vex_option.c
+  src/vex_thread.c
+  src/vex_time.c
+  src/vex_math.c
+  src/vex_process.c
+  src/vex_fs.c
+  src/vex_net.c
+  src/vex_init.c
 )
 
-# Platform-specific sources
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND VEX_RT_SOURCES src/platform/linux.c)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-    list(APPEND VEX_RT_SOURCES src/platform/macos.c)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
-    list(APPEND VEX_RT_SOURCES src/platform/windows.c)
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Generic")
-    list(APPEND VEX_RT_SOURCES src/platform/wasm.c)
-endif()
-
-add_library(vex_rt STATIC ${VEX_RT_SOURCES})
+add_library(vex_rt SHARED ${VEX_RUNTIME_SOURCES})
 
 target_include_directories(vex_rt
-    PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+  PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
 )
 
-target_compile_features(vex_rt PUBLIC c_std_11)
+set_target_properties(vex_rt PROPERTIES
+  VERSION   1.0.0
+  SOVERSION 1
+  OUTPUT_NAME vexruntime
+  C_STANDARD 11
+  C_STANDARD_REQUIRED ON
+)
 
-if(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
-    target_compile_options(vex_rt PRIVATE
-        -Wall -Wextra -Wno-unused-parameter
-        -fno-strict-aliasing
-    )
-endif()
+target_compile_options(vex_rt PRIVATE
+  -Wall -Wextra -Wno-unused-parameter
+  $<$<CONFIG:Release>:-O2 -DNDEBUG>
+  $<$<CONFIG:Debug>:-O0 -g3 -DVEX_DEBUG>
+)
 
-# Link pthread on Linux/macOS
-if(CMAKE_SYSTEM_NAME MATCHES "Linux|Darwin")
-    find_package(Threads REQUIRED)
-    target_link_libraries(vex_rt PUBLIC Threads::Threads)
-endif()
+# Link pthread and dl for threading / dynamic loading
+target_link_libraries(vex_rt PRIVATE pthread dl m)
 
-# Install
 install(TARGETS vex_rt
-    ARCHIVE DESTINATION lib
-    COMPONENT VexRuntime
+  LIBRARY DESTINATION "VEX-1.0.0-linux-x86_64/lib"
+  ARCHIVE DESTINATION "VEX-1.0.0-linux-x86_64/lib"
 )
-install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/vex_rt
-    DESTINATION include
-    COMPONENT VexRuntime
-    FILES_MATCHING PATTERN "*.h"
+
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+  DESTINATION "VEX-1.0.0-linux-x86_64/include/vex/rt"
 )

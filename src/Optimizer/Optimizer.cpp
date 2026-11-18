@@ -1,1 +1,2 @@
-// src/Optimizer/Optimizer.cpp
+#include "vex/Optimizer/Optimizer.h"
+namespace vex {}

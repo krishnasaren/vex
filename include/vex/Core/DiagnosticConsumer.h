@@ -37,13 +37,16 @@ public:
     void handleDiagnostic(const Diagnostic& diag) override;
     void finish() override;
 
+    // Update the SourceManager reference (e.g. after VexContext is constructed)
+    void setSrcMgr(const SourceManager& m) { srcMgr_ = &m; }
+
     // Statistics
     uint32_t errorCount()   const { return errorCount_; }
     uint32_t warningCount() const { return warningCount_; }
     bool     hasErrors()    const { return errorCount_ > 0; }
 
 private:
-    const SourceManager& srcMgr_;
+    const SourceManager* srcMgr_;
     bool                 useColor_;
     uint32_t             errorCount_   = 0;
     uint32_t             warningCount_ = 0;

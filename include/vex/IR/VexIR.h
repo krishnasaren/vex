@@ -7,6 +7,7 @@
 // Core VexIR data structures: Module, Function, Block, Instructions, Values.
 // ============================================================================
 
+#include "vex/IR/IRType.h"
 #include "vex/Lexer/TokenKind.h"
 #include "vex/Lexer/Token.h"
 #include "vex/AST/ASTNode.h"
@@ -375,6 +376,12 @@ public:
     void dump(std::ostream& os) const override;
 private:
     IRConstKind kind_;
+};
+
+class IRUnreachableInstr final : public IRInstr {
+public:
+    IRUnreachableInstr() : IRInstr(IRInstrKind::Unreachable) {}
+    void dump(std::ostream& os) const override { os << "  unreachable"; }
 };
 
 class IRCastInstr final : public IRInstr {

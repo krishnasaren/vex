@@ -1,0 +1,3 @@
+// VEX Standard Library — std::os
+@extern("vex_process_exit") fn exit(code: i32) -> never
+@extern("vex_env_get")      fn env(key: str) -> str

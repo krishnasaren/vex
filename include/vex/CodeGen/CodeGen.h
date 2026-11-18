@@ -86,6 +86,9 @@ public:
 private:
     DiagnosticEngine& diags_;
     const DriverOptions& opts_;
+    std::unique_ptr<llvm::LLVMContext> llvmCtx_;
+
+    void runOptPipeline(llvm::Module& mod, int level);
 };
 
 } // namespace vex

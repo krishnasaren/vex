@@ -18,7 +18,7 @@ public:
     bool run(ModuleDecl* mod);
 
     // Expand a single derive on a declaration
-    bool expand(Decl* decl, std::string_view traitName);
+    bool expand(DeclNode* decl, std::string_view traitName);
 
 private:
     SemaContext& ctx_;
@@ -36,7 +36,7 @@ private:
     bool deriveDisplay(EnumDecl* e);
 
     // Inject an impl block back into the AST
-    void injectImpl(ImplDecl* impl, Decl* forDecl);
+    void injectImpl(ImplDecl* impl, DeclNode* forDecl);
 };
 
 } // namespace vex

@@ -1,1 +1,2 @@
-// src/Linker/VexLinker.cpp
+#include "vex/Linker/VexLinker.h"
+namespace vex {}

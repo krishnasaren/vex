@@ -1,1 +1,2 @@
-// src/Module/VxlWriter.cpp
+#include "vex/Module/VxlWriter.h"
+namespace vex {}

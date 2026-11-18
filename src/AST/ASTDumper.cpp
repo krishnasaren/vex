@@ -40,8 +40,8 @@ void ASTDumper::visitModuleDecl(ModuleDecl* node) {
     printNode("ModuleDecl", node->location());
     fprintf(out_, "  name='%.*s'\n", (int)node->name.size(), node->name.data());
     auto g = indented();
-    for (auto* imp : node->imports) dispatch(imp);
-    for (auto* d   : node->decls)   dispatch(d);
+    for (auto* imp : node->imports) visit(imp);
+    for (auto* d   : node->decls)   visit(d);
 }
 
 void ASTDumper::visitImportDecl(ImportDecl* node) {
@@ -85,7 +85,7 @@ void ASTDumper::visitFnDecl(FnDecl* node) {
     fputc('\n', out_);
     if (node->body) {
         auto g = indented();
-        dispatch(node->body);
+        visit(node->body);
     }
 }
 
@@ -93,14 +93,14 @@ void ASTDumper::visitStructDecl(StructDecl* node) {
     printNode("StructDecl", node->location());
     fprintf(out_, "  name='%.*s'\n", (int)node->name.size(), node->name.data());
     auto g = indented();
-    for (auto* m : node->members) dispatch(m);
+    for (auto* m : node->members) visit(m);
 }
 
 void ASTDumper::visitClassDecl(ClassDecl* node) {
     printNode("ClassDecl", node->location());
     fprintf(out_, "  name='%.*s'\n", (int)node->name.size(), node->name.data());
     auto g = indented();
-    for (auto* m : node->members) dispatch(m);
+    for (auto* m : node->members) visit(m);
 }
 
 void ASTDumper::visitEnumDecl(EnumDecl* node) {
@@ -128,7 +128,7 @@ void ASTDumper::visitInterfaceDecl(InterfaceDecl* node) {
 void ASTDumper::visitImplDecl(ImplDecl* node) {
     printNode("ImplDecl", node->location());
     auto g = indented();
-    for (auto* m : node->members) dispatch(m);
+    for (auto* m : node->members) visit(m);
 }
 
 void ASTDumper::visitFieldDecl(FieldDecl* node) {
@@ -151,7 +151,7 @@ void ASTDumper::visitVarDecl(VarDecl* node) {
     fputc('\n', out_);
     if (node->initializer) {
         auto g = indented();
-        dispatch(node->initializer);
+        visit(node->initializer);
     }
 }
 
@@ -164,15 +164,15 @@ void ASTDumper::visitConstDecl(ConstDecl* node) {
     fputc('\n', out_);
     if (node->value) {
         auto g = indented();
-        dispatch(node->value);
+        visit(node->value);
     }
 }
 
 void ASTDumper::visitBlockStmt(BlockStmt* node) {
     printNode("BlockStmt", node->location());
     auto g = indented();
-    for (auto* s : node->stmts) dispatch(s);
-    if (node->trailingExpr) dispatch(node->trailingExpr);
+    for (auto* s : node->stmts) visit(s);
+    if (node->trailingExpr) visit(node->trailingExpr);
 }
 
 void ASTDumper::visitVarDeclStmt(VarDeclStmt* node) {
@@ -185,7 +185,7 @@ void ASTDumper::visitVarDeclStmt(VarDeclStmt* node) {
                 node->isMutable ? "var" : "let");
         if (b.initializer) {
             auto g2 = indented();
-            dispatch(b.initializer);
+            visit(b.initializer);
         }
     }
 }
@@ -193,7 +193,7 @@ void ASTDumper::visitVarDeclStmt(VarDeclStmt* node) {
 void ASTDumper::visitExprStmt(ExprStmt* node) {
     printNode("ExprStmt", node->location());
     auto g = indented();
-    dispatch(node->expr);
+    visit(node->expr);
 }
 
 void ASTDumper::visitIfStmt(IfStmt* node) {
@@ -203,22 +203,22 @@ void ASTDumper::visitIfStmt(IfStmt* node) {
         printIndent();
         fprintf(out_, "Branch\n");
         auto g2 = indented();
-        if (br.condition) dispatch(br.condition);
-        if (br.body)      dispatch(br.body);
+        if (br.condition) visit(br.condition);
+        if (br.body)      visit(br.body);
     }
     if (node->elseBranch) {
         printIndent();
         fprintf(out_, "ElseBranch\n");
         auto g2 = indented();
-        dispatch(node->elseBranch);
+        visit(node->elseBranch);
     }
 }
 
 void ASTDumper::visitWhileStmt(WhileStmt* node) {
     printNode("WhileStmt", node->location());
     auto g = indented();
-    if (node->condition) dispatch(node->condition);
-    if (node->body)      dispatch(node->body);
+    if (node->condition) visit(node->condition);
+    if (node->body)      visit(node->body);
 }
 
 void ASTDumper::visitForStmt(ForStmt* node) {
@@ -231,22 +231,22 @@ void ASTDumper::visitForStmt(ForStmt* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    if (node->iterable) dispatch(node->iterable);
-    if (node->body)     dispatch(node->body);
+    if (node->iterable) visit(node->iterable);
+    if (node->body)     visit(node->body);
 }
 
 void ASTDumper::visitReturnStmt(ReturnStmt* node) {
     printNode("ReturnStmt", node->location());
     if (node->value) {
         auto g = indented();
-        dispatch(node->value);
+        visit(node->value);
     }
 }
 
 void ASTDumper::visitMatchStmt(MatchStmt* node) {
     printNode("MatchStmt", node->location());
     auto g = indented();
-    if (node->subject) dispatch(node->subject);
+    if (node->subject) visit(node->subject);
     for (auto* arm : node->arms) {
         printIndent();
         fprintf(out_, "MatchArm\n");
@@ -307,8 +307,8 @@ void ASTDumper::visitBinaryExpr(BinaryExpr* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    dispatch(node->left);
-    dispatch(node->right);
+    visit(node->left);
+    visit(node->right);
 }
 
 void ASTDumper::visitUnaryExpr(UnaryExpr* node) {
@@ -321,13 +321,13 @@ void ASTDumper::visitUnaryExpr(UnaryExpr* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    dispatch(node->operand);
+    visit(node->operand);
 }
 
 void ASTDumper::visitCallExpr(CallExpr* node) {
     printNode("CallExpr", node->location());
     auto g = indented();
-    dispatch(node->callee);
+    visit(node->callee);
     for (auto& arg : node->args) {
         printIndent();
         if (!arg.name.empty())
@@ -336,7 +336,7 @@ void ASTDumper::visitCallExpr(CallExpr* node) {
         else
             fprintf(out_, "Arg:\n");
         auto g2 = indented();
-        dispatch(arg.value);
+        visit(arg.value);
     }
 }
 
@@ -348,7 +348,7 @@ void ASTDumper::visitMemberExpr(MemberExpr* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    dispatch(node->base);
+    visit(node->base);
 }
 
 void ASTDumper::visitModulePathExpr(ModulePathExpr* node) {
@@ -372,16 +372,16 @@ void ASTDumper::visitAssignExpr(AssignExpr* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    dispatch(node->target);
-    dispatch(node->value);
+    visit(node->target);
+    visit(node->value);
 }
 
 void ASTDumper::visitIfExpr(IfExpr* node) {
     printNode("IfExpr", node->location());
     auto g = indented();
-    if (node->condition)  dispatch(node->condition);
-    if (node->thenBranch) dispatch(node->thenBranch);
-    if (node->elseBranch) dispatch(node->elseBranch);
+    if (node->condition)  visit(node->condition);
+    if (node->thenBranch) visit(node->thenBranch);
+    if (node->elseBranch) visit(node->elseBranch);
 }
 
 void ASTDumper::visitLambdaExpr(LambdaExpr* node) {
@@ -393,8 +393,8 @@ void ASTDumper::visitLambdaExpr(LambdaExpr* node) {
     printLoc(node->location());
     fputc('\n', out_);
     auto g = indented();
-    if (node->bodyExpr)  dispatch(node->bodyExpr);
-    if (node->bodyBlock) dispatch(node->bodyBlock);
+    if (node->bodyExpr)  visit(node->bodyExpr);
+    if (node->bodyBlock) visit(node->bodyBlock);
 }
 
 void ASTDumper::visitNamedType(NamedType* node) {
@@ -409,13 +409,13 @@ void ASTDumper::visitNamedType(NamedType* node) {
 void ASTDumper::visitNullableType(NullableType* node) {
     printNode("NullableType", node->location());
     auto g = indented();
-    dispatch(node->inner);
+    visit(node->inner);
 }
 
 void ASTDumper::visitSliceType(SliceType* node) {
     printNode("SliceType", node->location());
     auto g = indented();
-    dispatch(node->elem);
+    visit(node->elem);
 }
 
 } // namespace vex

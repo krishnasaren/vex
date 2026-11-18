@@ -1,1 +1,2 @@
-// src/Linker/ObjectEmitter.cpp
+#include "vex/Linker/ObjectEmitter.h"
+namespace vex {}

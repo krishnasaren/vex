@@ -5,6 +5,7 @@
 // vex/IR/IRPass.h  — Base class for IR transformation and analysis passes
 // ============================================================================
 #include <string_view>
+#include <cstdint>
 
 namespace vex {
 

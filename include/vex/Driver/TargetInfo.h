@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // include/vex/Driver/TargetInfo.h
 
 // ============================================================================
@@ -32,7 +33,7 @@ public:
 
     bool isX86_64()  const { return arch_ == "x86_64"; }
     bool isAArch64() const { return arch_ == "aarch64"; }
-    bool isWasm()    const { return arch_.starts_with("wasm"); }
+    bool isWasm()    const { return arch_.rfind("wasm", 0) == 0; }
     bool isLinux()   const { return os_  == "linux"; }
     bool isWindows() const { return os_  == "windows"; }
     bool isMacOS()   const { return os_  == "darwin" || os_ == "macos"; }

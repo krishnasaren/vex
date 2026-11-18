@@ -1,4 +1,5 @@
 #pragma once
+#include "vex/IR/VexIR.h"
 // include/vex/Optimizer/EscapeAnalysis.h
 
 

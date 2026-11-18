@@ -1,1 +1,2 @@
-// src/Optimizer/InlinerPolicy.cpp
+#include "vex/Optimizer/InlinerPolicy.h"
+namespace vex {}

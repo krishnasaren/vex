@@ -1,1 +1,2 @@
-// src/Module/PackageResolver.cpp
+#include "vex/Module/PackageResolver.h"
+namespace vex {}

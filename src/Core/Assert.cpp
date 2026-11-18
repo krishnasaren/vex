@@ -1,36 +1,19 @@
-// ============================================================================
-// vex/Core/Assert.cpp
-// ============================================================================
-
+// src/Core/Assert.cpp
 #include "vex/Core/Assert.h"
 #include <cstdio>
 #include <cstdlib>
 
 namespace vex {
 
-[[noreturn]] void assertionFailed(
-    std::string_view msg,
-    std::string_view file,
-    int              line,
-    std::string_view func)
-{
-    fprintf(stderr,
-        "\n"
-        "╔══════════════════════════════════════════════════════════╗\n"
-        "║         VEX INTERNAL COMPILER ERROR                      ║\n"
-        "╠══════════════════════════════════════════════════════════╣\n"
-        "║ Assertion: %.*s\n"
-        "║ Location:  %.*s:%d\n"
-        "║ Function:  %.*s\n"
-        "╚══════════════════════════════════════════════════════════╝\n"
-        "\nThis is a compiler bug. Please report it at:\n"
-        "  https://github.com/vex-lang/vex/issues\n\n",
-        (int)msg.size(),  msg.data(),
-        (int)file.size(), file.data(),
-        line,
-        (int)func.size(), func.data()
-    );
-    fflush(stderr);
+[[noreturn]] void assertionFailed(std::string_view msg,
+                                  std::string_view file,
+                                  int line,
+                                  std::string_view func) {
+    fprintf(stderr, "\n*** VEX compiler internal error ***\n");
+    fprintf(stderr, "  Assertion: %.*s\n",  (int)msg.size(),  msg.data());
+    fprintf(stderr, "  Function:  %.*s\n",  (int)func.size(), func.data());
+    fprintf(stderr, "  Location:  %.*s:%d\n", (int)file.size(), file.data(), line);
+    fprintf(stderr, "\nThis is a compiler bug. Please report it.\n\n");
     abort();
 }
 

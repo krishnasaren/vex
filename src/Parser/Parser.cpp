@@ -235,7 +235,7 @@ std::vector<Decorator*> Parser::parseDecorators() {
         // Optional argument list: @name(args...)
         if (match(TokenKind::LParen)) {
             while (!check(TokenKind::RParen) && !atEnd()) {
-                auto* arg = parseExpr();
+                auto arg = parseExpr();
                 if (arg.ok()) dec->args.push_back(arg.get());
                 if (!match(TokenKind::Comma)) break;
             }
@@ -367,7 +367,7 @@ std::vector<Parser::ParsedParam> Parser::parseParamList() {
         // &mut T parameter
         if (match(TokenKind::Amp)) {
             if (match(TokenKind::KW_move)) {
-                p.isMutableBorrow = true;
+                p.isMut = true;
             }
         }
 
@@ -469,7 +469,6 @@ std::vector<Parser::SelectiveImportItem> Parser::parseSelectiveImportList() {
 
     while (!check(TokenKind::RBrace) && !atEnd()) {
         SelectiveImportItem item;
-        item.loc = currentLoc();
         item.isWildcard = false;
 
         if (!check(TokenKind::Identifier)) {

@@ -55,7 +55,7 @@ ParseResult<ImportDecl*> Parser::parseImport() {
             decl->isOpenImport = true;
         } else {
             for (auto& item : items) {
-                SelectiveImportItem si;
+                vex::SelectiveImportItem si;
                 si.originalName = ctx_.intern(item.originalName);
                 si.localName    = ctx_.intern(item.localName);
                 si.isWildcard   = item.isWildcard;

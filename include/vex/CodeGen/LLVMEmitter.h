@@ -98,6 +98,7 @@ private:
 // vex/CodeGen/LLVMEmitter.h  — Emits LLVM IR from VEX IR
 // ============================================================================
 #include "vex/IR/IRModule.h"
+#include "vex/AST/Decl.h"
 #include "vex/CodeGen/LLVMTypeMapper.h"
 #include "vex/CodeGen/LLVMDebugInfo.h"
 #include "vex/CodeGen/ABI.h"

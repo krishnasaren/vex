@@ -1,1 +1,3 @@
-// src/CodeGen/DeclEmitter.cpp
+// src/CodeGen/DeclEmitter.cpp — stub
+#include "vex/CodeGen/DeclEmitter.h"
+namespace vex {}

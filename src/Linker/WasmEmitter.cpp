@@ -1,1 +1,2 @@
-// src/Linker/WasmEmitter.cpp
+#include "vex/Linker/WasmEmitter.h"
+namespace vex {}

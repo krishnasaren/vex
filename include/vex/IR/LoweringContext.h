@@ -1,11 +1,5 @@
 #pragma once
-// ============================================================================
-// vex/IR/LoweringContext.h
-// The context object carried through IRGen.
-// Tracks: current function, current block, local variable map, loop stack.
-// Provides typed emit<T>() helpers.
-// ============================================================================
-/*
+// vex/IR/LoweringContext.h — Context object carried through IRGen
 #include "vex/IR/VexIR.h"
 #include "vex/AST/Expr.h"
 #include "vex/AST/Pattern.h"
@@ -18,28 +12,20 @@
 namespace vex {
 
 struct LoopFrame {
-    IRBlock* continueBlock; // jump target for `skip`
-    IRBlock* breakBlock;    // jump target for `stop`
+    IRBlock* continueBlock;
+    IRBlock* breakBlock;
 };
-
-// ── LoweringContext ───────────────────────────────────────────────────────────
 
 class LoweringContext {
 public:
-    // ── Module / Function / Block management ─────────────────────────────────
-
-    void setModule(IRModule* m)        { module_ = m; }
-    IRModule* module()           const { return module_; }
-
+    void setModule(IRModule* m)             { module_ = m; }
+    IRModule* module()           const      { return module_; }
     void setCurrentFunction(IRFunction* fn) { currentFn_ = fn; }
-    IRFunction* currentFunction()    const  { return currentFn_; }
+    IRFunction* currentFunction() const     { return currentFn_; }
+    void setCurrentBlock(IRBlock* b)        { currentBB_ = b; }
+    IRBlock* currentBlock()      const      { return currentBB_; }
 
-    void setCurrentBlock(IRBlock* b)  { currentBB_ = b; }
-    IRBlock* currentBlock()    const  { return currentBB_; }
-
-    // ── Emit helpers ──────────────────────────────────────────────────────────
-
-    // Emit an instruction into the current block and return it.
+    // ── Emit ─────────────────────────────────────────────────────────────────
     template<typename T, typename... Args>
     T* emit(Args&&... args) {
         auto instr = std::make_unique<T>(std::forward<Args>(args)...);
@@ -48,111 +34,71 @@ public:
         lastVal_ = ptr;
         return ptr;
     }
-
     IRValue* lastValue() const { return lastVal_; }
 
-    // ── Local variable map ────────────────────────────────────────────────────
-
+    // ── Locals ───────────────────────────────────────────────────────────────
     void defineLocal(std::string_view name, IRValue* val) {
         locals_[std::string(name)] = val;
     }
-
     IRValue* lookupLocal(std::string_view name) const {
         auto it = locals_.find(std::string(name));
         return it != locals_.end() ? it->second : nullptr;
     }
-
-    // Lookup and emit a load if the value is an alloca
     IRValue* lookupOrLoad(std::string_view name) {
         auto* val = lookupLocal(name);
         if (!val) return emit<IRConstInstr>(IRConstKind::Undef);
         if (val->kind() == IRValueKind::Instruction) {
             auto* instr = static_cast<IRInstr*>(val);
-            if (instr->kind() == IRInstrKind::Alloca)
+            if (static_cast<IRInstr*>(instr)->kind() == IRInstrKind::Alloca)
                 return emit<IRLoadInstr>(val);
         }
         return val;
     }
-
-    // Emit a store target (return the alloca pointer for the lvalue)
     IRValue* lowerLValue(ExprNode* target) {
-        if (target->is(ASTNodeKind::IdentExpr)) {
+        if (target && target->is(ASTNodeKind::IdentExpr)) {
             auto* id  = static_cast<IdentExpr*>(target);
             auto* val = lookupLocal(id->name);
             if (val) return val;
         }
-        // For member / index access, return the GEP pointer
         return emit<IRConstInstr>(IRConstKind::Undef);
     }
 
-    // ── Loop management ───────────────────────────────────────────────────────
-
-    void pushLoop(IRBlock* continueBlock, IRBlock* breakBlock) {
-        loopStack_.push({continueBlock, breakBlock});
-    }
-
-    void popLoop() {
-        if (!loopStack_.empty()) loopStack_.pop();
-    }
-
+    // ── Loop stack ────────────────────────────────────────────────────────────
+    void pushLoop(IRBlock* cont, IRBlock* brk) { loopStack_.push({cont, brk}); }
+    void popLoop()  { if (!loopStack_.empty()) loopStack_.pop(); }
     void emitContinue() {
-        if (!loopStack_.empty())
-            emit<IRBrInstr>(loopStack_.top().continueBlock);
+        if (!loopStack_.empty()) emit<IRBrInstr>(loopStack_.top().continueBlock);
     }
-
     void emitBreak() {
-        if (!loopStack_.empty())
-            emit<IRBrInstr>(loopStack_.top().breakBlock);
+        if (!loopStack_.empty()) emit<IRBrInstr>(loopStack_.top().breakBlock);
     }
 
-    // ── Defer tracking ────────────────────────────────────────────────────────
-
-    void registerDefer(ExprNode* expr) {
-        defers_.push_back(expr);
-    }
-
+    // ── Defer list ────────────────────────────────────────────────────────────
+    void registerDefer(ExprNode* e) { defers_.push_back(e); }
     const std::vector<ExprNode*>& defers() const { return defers_; }
 
     // ── Error propagation ─────────────────────────────────────────────────────
-
     IRValue* emitErrorProp(IRValue* val) {
-        // Emit: if val is Err → return Err. Otherwise unwrap Ok.
-        auto* fn      = currentFn_;
-        auto* errBB   = fn->createBlock("errprop.err");
-        auto* okBB    = fn->createBlock("errprop.ok");
-        auto* isOk    = emit<IRCallInstr>("__result_is_ok",
-                                          std::vector<IRValue*>{val});
+        auto* errBB = currentFn_->createBlock("errprop.err");
+        auto* okBB  = currentFn_->createBlock("errprop.ok");
+        auto* isOk  = emit<IRCallInstr>("__result_is_ok", std::vector<IRValue*>{val});
         emit<IRCondBrInstr>(isOk, okBB, errBB);
-
         setCurrentBlock(errBB);
-        auto* errVal = emit<IRCallInstr>("__result_err",
-                                         std::vector<IRValue*>{val});
-        emit<IRReturnInstr>(errVal);
-
+        auto* ev = emit<IRCallInstr>("__result_err", std::vector<IRValue*>{val});
+        emit<IRReturnInstr>(ev);
         setCurrentBlock(okBB);
-        return emit<IRCallInstr>("__result_ok",
-                                  std::vector<IRValue*>{val});
+        return emit<IRCallInstr>("__result_ok", std::vector<IRValue*>{val});
     }
 
     // ── Pattern test ──────────────────────────────────────────────────────────
-
     IRValue* emitPatternTest(IRValue* subject, PatternNode* pattern) {
-        if (!pattern)
-            return emit<IRBoolConstInstr>(true);
-        // Emit runtime pattern matching test — returns bool
-        return emit<IRCallInstr>(
-            "__pattern_match",
-            std::vector<IRValue*>{subject});
+        if (!pattern) return emit<IRBoolConstInstr>(true);
+        return emit<IRCallInstr>("__pattern_match", std::vector<IRValue*>{subject});
     }
 
-    // ── Lambda emission ───────────────────────────────────────────────────────
-
-    IRValue* emitLambda(LambdaExpr* expr) {
-        // Create a new anonymous function for the lambda body
-        auto* fn = module_->createFunction("__lambda");
-        // The lambda is represented as a value referencing the fn ptr
-        return emit<IRCallInstr>("__make_closure",
-                                  std::vector<IRValue*>{});
+    // ── Lambda ────────────────────────────────────────────────────────────────
+    IRValue* emitLambda(LambdaExpr*) {
+        return emit<IRCallInstr>("__make_closure", std::vector<IRValue*>{});
     }
 
 private:
@@ -160,56 +106,9 @@ private:
     IRFunction* currentFn_ = nullptr;
     IRBlock*    currentBB_ = nullptr;
     IRValue*    lastVal_   = nullptr;
-
     std::unordered_map<std::string, IRValue*> locals_;
     std::stack<LoopFrame>                     loopStack_;
     std::vector<ExprNode*>                    defers_;
 };
 
 } // namespace vex
-*/
-
-
-
-
-
-#pragma once
-// ============================================================================
-// vex/IR/LoweringContext.h  — Context shared by all IR lowering passes
-// ============================================================================
-#include "vex/IR/IRBuilder.h"
-#include "vex/IR/IRModule.h"
-#include "vex/Core/DiagnosticEngine.h"
-
-namespace vex {
-
-class LoweringContext {
-public:
-    LoweringContext(IRModule& mod, DiagnosticEngine& diags)
-        : mod_(mod), builder_(mod), diags_(diags) {}
-
-    IRModule&         module()  { return mod_; }
-    IRBuilder&        builder() { return builder_; }
-    DiagnosticEngine& diags()   { return diags_; }
-
-    // State for async coroutine transformation
-    IRFunction* currentCoroutine    = nullptr;
-    IRBlock*    suspendBlock        = nullptr;
-    IRBlock*    resumeBlock         = nullptr;
-    IRValue*    coroutineStatePtr   = nullptr;
-
-    // State for generator transformation
-    IRFunction* currentGenerator    = nullptr;
-    IRBlock*    yieldBlock          = nullptr;
-    IRValue*    generatorStatePtr   = nullptr;
-
-private:
-    IRModule&         mod_;
-    IRBuilder         builder_;
-    DiagnosticEngine& diags_;
-};
-
-} // namespace vex
-
-
-

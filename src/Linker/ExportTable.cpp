@@ -1,1 +1,2 @@
-// src/Linker/ExportTable.cpp
+#include "vex/Linker/ExportTable.h"
+namespace vex {}

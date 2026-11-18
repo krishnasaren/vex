@@ -1,0 +1,14 @@
+// Test: Arithmetic — PASS
+import std::io
+
+fn add(a: i64, b: i64) -> i64 { a + b }
+fn mul(a: i64, b: i64) -> i64 { a * b }
+fn fib(n: i64) -> i64 {
+    if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+    let x = add(3, 4)
+    let y = mul(x, 2)
+    io::println("arithmetic ok")
+}

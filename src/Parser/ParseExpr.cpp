@@ -48,12 +48,26 @@ ParseResult<ExprNode*> Parser::parseInfix(ExprNode* left, Prec minPrec) {
             continue;
         }
 
-        // Postfix: () [] . ?. ++ -- as as? is
-        auto postfixed = parsePostfix(left);
-        if (!postfixed.ok()) return postfixed;
-        if (postfixed.get() == left) break; // no postfix consumed
-        left = postfixed.get();
-        continue;
+        // Check if this is a pure postfix operator (suffix () [] . ?. ++ --)
+        // vs a binary infix operator. Postfix has higher precedence via parsePostfix.
+        bool isPostfix = (k == TokenKind::LParen   ||
+                          k == TokenKind::LBracket  ||
+                          k == TokenKind::Dot        ||
+                          k == TokenKind::QuestionDot||
+                          k == TokenKind::PlusPlus   ||
+                          k == TokenKind::MinusMinus ||
+                          k == TokenKind::ColonColon ||
+                          k == TokenKind::KW_as      ||
+                          k == TokenKind::KW_as_q    ||
+                          k == TokenKind::KW_is);
+
+        if (isPostfix) {
+            auto postfixed = parsePostfix(left);
+            if (!postfixed.ok()) return postfixed;
+            if (postfixed.get() == left) break;
+            left = postfixed.get();
+            continue;
+        }
 
         // Standard binary operator
         auto loc = currentLoc();
@@ -741,23 +755,23 @@ ParseResult<ExprNode*> Parser::parseCallExpr(ExprNode* callee) {
     return ParseResult<ExprNode*>(call);
 }
 
-std::vector<Parser::ParsedArg> Parser::parseArgList() {
-    std::vector<ParsedArg> args;
+std::vector<CallArg> Parser::parseArgList() {
+    std::vector<CallArg> args;
     expectConsume(TokenKind::LParen);
 
     while (!check(TokenKind::RParen) && !atEnd()) {
-        ParsedArg arg;
-        arg.loc = currentLoc();
+        CallArg arg;
+        arg.loc      = currentLoc();
+        arg.isSpread = false;
 
         // Named arg: name: expr
         if (check(TokenKind::Identifier) && peek(1).kind() == TokenKind::Colon) {
-            arg.name = std::string(current().text());
+            arg.name = ctx_.intern(current().text());
             advance(); advance(); // consume name + ':'
         }
 
         // Spread: ...expr
-        bool isSpread = false;
-        if (match(TokenKind::DotDotDot)) isSpread = true;
+        if (match(TokenKind::DotDotDot)) arg.isSpread = true;
 
         auto expr = parseExpr();
         if (expr.ok()) arg.value = expr.get();

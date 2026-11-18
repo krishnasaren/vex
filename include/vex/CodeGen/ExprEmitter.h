@@ -19,7 +19,7 @@ public:
 
     llvm::Value* emit(ExprNode* e);
 
-    llvm::Value* emitLiteral(LiteralExpr* e);
+    llvm::Value* emitLiteral(IntLitExpr* e);
     llvm::Value* emitIdent(IdentExpr* e);
     llvm::Value* emitBinary(BinaryExpr* e);
     llvm::Value* emitUnary(UnaryExpr* e);
@@ -28,19 +28,19 @@ public:
     llvm::Value* emitIndex(IndexExpr* e);
     llvm::Value* emitIf(IfExpr* e);
     llvm::Value* emitMatch(MatchExpr* e);
-    llvm::Value* emitClosure(ClosureExpr* e);
+    llvm::Value* emitClosure(LambdaExpr* e);
     llvm::Value* emitBlock(BlockExpr* e);
     llvm::Value* emitCast(CastExpr* e);
     llvm::Value* emitRange(RangeExpr* e);
     llvm::Value* emitTuple(TupleExpr* e);
-    llvm::Value* emitArray(ArrayExpr* e);
-    llvm::Value* emitAwait(AwaitExpr* e);
-    llvm::Value* emitYield(YieldExpr* e);
-    llvm::Value* emitTry(TryExpr* e);
+    llvm::Value* emitArray(ListExpr* e);
+    llvm::Value* emitAwait(UnaryExpr* e);
+    llvm::Value* emitYield(UnaryExpr* e);
+    llvm::Value* emitTry(UnaryExpr* e);
     llvm::Value* emitStructLit(StructLitExpr* e);
-    llvm::Value* emitFormatStr(FmtStrExpr* e);
+    llvm::Value* emitFormatStr(FmtStringExpr* e);
     llvm::Value* emitAssign(AssignExpr* e);
-    llvm::Value* emitCompoundAssign(CompoundAssignExpr* e);
+    llvm::Value* emitCompoundAssign(AssignExpr* e);
 
 private:
     LLVMEmitter&      parent_;

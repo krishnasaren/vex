@@ -1,8 +1,10 @@
 #pragma once
+#include <cstdint>
 // include/vex/Driver/BuildMode.h
 
 
 #pragma once
+#include <cstdint>
 // vex/Driver/BuildMode.h
 #include <string_view>
 namespace vex {

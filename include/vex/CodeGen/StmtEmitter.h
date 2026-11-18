@@ -27,10 +27,10 @@ public:
     void emitWhile(WhileStmt* s);
     void emitFor(ForStmt* s);
     void emitMatch(MatchStmt* s);
-    void emitBreak(BreakStmt* s);
-    void emitContinue(ContinueStmt* s);
+    void emitBreak(StopStmt* s);
+    void emitContinue(SkipStmt* s);
     void emitDefer(DeferStmt* s);
-    void emitYield(YieldStmt* s);
+    void emitYield(ExprStmt* s);
     void emitExprStmt(ExprStmt* s);
     void emitImplicitReturn(llvm::Value* retVal);
 

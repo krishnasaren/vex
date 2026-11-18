@@ -5,6 +5,7 @@
 // vex/IR/IRBuilder.h  — Convenience builder for constructing IR instructions
 // ============================================================================
 #include "vex/IR/IRModule.h"
+#include "vex/IR/IRType.h"
 #include "vex/IR/IRInstrKind.h"
 #include <string>
 
@@ -16,7 +17,7 @@ public:
 
     // Set insertion point
     void setInsertPoint(IRBlock* block)   { block_ = block; }
-    void setInsertPoint(IRFunction* fn)   { fn_ = fn; block_ = fn->entry(); }
+    void setInsertPoint(IRFunction* fn)   { fn_ = fn; block_ = fn->entryBlock(); }
     IRBlock*    insertBlock()    const    { return block_; }
     IRFunction* insertFunction() const   { return fn_; }
 

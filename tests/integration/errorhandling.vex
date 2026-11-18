@@ -1,0 +1,13 @@
+// Test: Error handling
+import std::io
+
+fn divide(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        return Err("division by zero")
+    }
+    Ok(a / b)
+}
+
+fn main() {
+    io::println("error handling ok")
+}

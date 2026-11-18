@@ -1,0 +1,6 @@
+// Test: Hello World
+import std::io
+
+fn main() {
+    io::println("Hello, World!")
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // include/vex/Core/ADT/DAG.h
 
 

@@ -1,1 +1,2 @@
-// src/Linker/LibraryManager.cpp
+#include "vex/Linker/LibraryManager.h"
+namespace vex {}

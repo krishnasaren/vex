@@ -1,1 +1,2 @@
-// src/Module/ImportResolver.cpp
+#include "vex/Module/ImportResolver.h"
+namespace vex {}

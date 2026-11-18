@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // include/vex/Driver/CompilationUnit.h
 
 
@@ -6,14 +7,13 @@
 // vex/Driver/CompilationUnit.h  — A single source file being compiled
 // ============================================================================
 #include "vex/Core/SourceLocation.h"
+#include "vex/AST/ASTContext.h"
+#include "vex/IR/VexIR.h"
 #include <string>
 #include <memory>
 
 namespace vex {
-
-class ASTContext;
 class ModuleDecl;
-class IRModule;
 
 struct CompilationUnit {
     uint32_t          fileId;

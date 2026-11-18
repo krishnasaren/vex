@@ -85,7 +85,7 @@ ParseResult<FnDecl*> Parser::parseFnDecl(bool isAsync, bool isGenerator, Visibil
         param->defaultValue  = p.defVal;
         param->isSelf        = p.isSelf;
         param->isVariadic    = p.isVariadic;
-        param->isMutableBorrow = p.isMutableBorrow;
+        param->isMutableBorrow = p.isMut;
         fn->params.push_back(param);
     }
 

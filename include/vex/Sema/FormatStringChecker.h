@@ -7,6 +7,9 @@
 // (for fmt::format, print, println, etc.)
 // ============================================================================
 #include "vex/Sema/SemaContext.h"
+#include "vex/AST/Decl.h"
+#include "vex/AST/Expr.h"
+#include "vex/AST/Stmt.h"
 #include "vex/AST/Expr.h"
 #include <vector>
 

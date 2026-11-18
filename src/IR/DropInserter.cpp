@@ -1,1 +1,3 @@
-// src/IR/DropInserter.cpp
+// src/IR/DropInserter.cpp — stub
+#include "vex/IR/DropInserter.h"
+namespace vex {}

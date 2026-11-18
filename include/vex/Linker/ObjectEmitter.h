@@ -1,4 +1,5 @@
 #pragma once
+#include "llvm/Target/TargetMachine.h"
 // include/vex/Linker/ObjectEmitter.h
 
 

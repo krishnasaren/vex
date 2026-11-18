@@ -1,55 +1,39 @@
 #pragma once
-// ============================================================================
 // vex/Parser/ParseResult.h
-// Result type returned by every parse method.
-// On success: holds a non-null AST node pointer.
-// On failure: null pointer — diagnostic already emitted.
-// ============================================================================
-
 #include <cstddef>
+#include <type_traits>
 
 namespace vex {
 
-// ── ParseResult<T> ────────────────────────────────────────────────────────────
-// T must be a pointer type (AST node pointer).
-// Wraps success/failure without requiring exceptions.
-
 template<typename T>
 class ParseResult {
+    static_assert(std::is_pointer<T>::value,
+                  "ParseResult<T>: T must be a pointer type");
 public:
-    // Success constructor
-    explicit ParseResult(T ptr) : ptr_(ptr) {}
-
-    // Failure constructor
-    ParseResult(std::nullptr_t) : ptr_(nullptr) {}
-
-    // Implicit conversion from T (allows: return node;)
-    ParseResult(T ptr, bool) : ptr_(ptr) {}
+    // Implicit from T (return node;)
+    ParseResult(T ptr) : ptr_(ptr) {}           // NOLINT
+    // Implicit from nullptr (return nullptr;)
+    ParseResult(std::nullptr_t) : ptr_(nullptr) {}  // NOLINT
 
     bool ok()     const { return ptr_ != nullptr; }
     bool failed() const { return ptr_ == nullptr; }
 
-    T    get()    const { return ptr_; }
-    T    operator->() const { return ptr_; }
+    T    get()           const { return ptr_; }
+    T    operator->()    const { return ptr_; }
+    explicit operator bool()  const { return ok(); }
 
-    explicit operator bool() const { return ok(); }
+    T release() { T tmp = ptr_; ptr_ = nullptr; return tmp; }
 
-    // Release the pointer (caller takes ownership)
-    T release() {
-        T tmp = ptr_;
-        ptr_ = nullptr;
-        return tmp;
-    }
+    static ParseResult<T> error() { return nullptr; }
 
-    static ParseResult<T> error() { return ParseResult<T>(nullptr); }
+    // Covariant upcast: ParseResult<Derived*> → ParseResult<Base*>
+    template<typename U,
+             typename std::enable_if<
+                 std::is_convertible<T, U>::value, int>::type = 0>
+    operator ParseResult<U>() const { return static_cast<U>(ptr_); }
 
 private:
     T ptr_;
 };
-
-// Convenience alias — most parse methods return one of these
-// ParseResult<ExprNode*>   parseExpr(...)
-// ParseResult<StmtNode*>   parseStmt(...)
-// ParseResult<DeclNode*>   parseDecl(...)
 
 } // namespace vex

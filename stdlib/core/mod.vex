@@ -1,0 +1,27 @@
+// VEX Standard Library — std::core
+trait Into<T> { fn into(self) -> T }
+trait From<T> { static fn from(val: T) -> Self }
+trait Display { fn fmt(self, buf: &mut string) }
+trait Debug   { fn dbgFmt(self, buf: &mut string) }
+trait Clone   { fn clone(self) -> Self }
+trait Drop    { fn drop(mut self) }
+trait Default { static fn default() -> Self }
+
+trait Eq {
+    fn eq(self, other: &Self) -> bool
+    fn ne(self, other: &Self) -> bool { !self.eq(other) }
+}
+trait Ord : Eq {
+    fn cmp(self, other: &Self) -> i32
+    fn lt(self, other: &Self) -> bool { self.cmp(other) < 0 }
+    fn le(self, other: &Self) -> bool { self.cmp(other) <= 0 }
+    fn gt(self, other: &Self) -> bool { self.cmp(other) > 0 }
+    fn ge(self, other: &Self) -> bool { self.cmp(other) >= 0 }
+}
+trait Hash { fn hash(self) -> u64 }
+trait Iterator<T> { fn next(mut self) -> T? }
+
+fn panic(msg: str) -> never {
+    @extern("vex_panic") fn __panic(msg: str, file: str, line: u32) -> never
+    __panic(msg, "", 0)
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 // include/vex/Driver/OptionTable.h
 
 // vex/Driver/OptionTable.h  — Static option descriptor table

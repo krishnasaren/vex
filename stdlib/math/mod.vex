@@ -1,0 +1,13 @@
+// VEX Standard Library — std::math
+const PI: f64 = 3.141592653589793
+const E:  f64 = 2.718281828459045
+@extern("vex_math_sqrt")  fn sqrt(x: f64) -> f64
+@extern("vex_math_pow")   fn pow(base: f64, exp: f64) -> f64
+@extern("vex_math_sin")   fn sin(x: f64) -> f64
+@extern("vex_math_cos")   fn cos(x: f64) -> f64
+@extern("vex_math_floor") fn floor(x: f64) -> f64
+@extern("vex_math_ceil")  fn ceil(x: f64) -> f64
+@extern("vex_math_abs_f64") fn abs(x: f64) -> f64
+@extern("vex_math_min_i64") fn min(a: i64, b: i64) -> i64
+@extern("vex_math_max_i64") fn max(a: i64, b: i64) -> i64
+@extern("vex_random_f64")   fn random() -> f64

@@ -7,6 +7,7 @@
 #include "vex/Core/SourceLocation.h"
 #include "vex/AST/Decl.h"
 #include "llvm/IR/DIBuilder.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include <string_view>
 

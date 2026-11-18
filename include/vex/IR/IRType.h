@@ -41,10 +41,10 @@ public:
     uint32_t bitWidth() const;
 
     // For pointer types — pointee
-    IRType* pointee() const { return sub_.empty() ? nullptr : sub_[0].get(); }
+    IRType* pointee() const { return sub_.empty() ? nullptr : sub_[0]; }
 
     // For struct/function types — element types
-    const std::vector<std::unique_ptr<IRType>>& elements() const { return sub_; }
+    const std::vector<IRType*>& elements() const { return sub_; }
 
     std::string toString() const;
 
@@ -59,13 +59,16 @@ public:
     static IRType* getFunction(IRType* ret, std::vector<IRType*> params, bool vararg = false);
     static IRType* getVector(IRType* elem, uint32_t lanes);
 
-private:
-    IRTypeKind kind_;
+    // Internal use by factory methods
+    static IRType* make_();  // creates default-constructed IRType
+
+protected:
+    IRTypeKind kind_   = IRTypeKind::Void;
     uint32_t   intWidth_ = 0;
     uint64_t   arrayCount_ = 0;
     uint32_t   vectorLanes_ = 0;
     std::string name_;
-    std::vector<std::unique_ptr<IRType>> sub_;
+    std::vector<IRType*> sub_;  // non-owning; lifetime managed by global typeCache
     bool isSigned_ = true;
 };
 

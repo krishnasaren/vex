@@ -1,9 +1,11 @@
 #pragma once
+#include <cstdint>
 // include/vex/Core/Error.h
 
 
 
 #pragma once
+#include <cstdint>
 // ============================================================================
 // vex/Core/Error.h  — Error / Result types for the compiler pipeline
 // ============================================================================

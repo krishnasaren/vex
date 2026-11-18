@@ -252,7 +252,7 @@ ParseResult<DoWhileStmt*> Parser::parseDoWhileStmt() {
 
 // ── ForStmt ───────────────────────────────────────────────────────────────────
 
-ParseResult<ForStmt*> Parser::parseForStmt() {
+ParseResult<StmtNode*> Parser::parseForStmt() {
     auto loc = currentLoc();
     ++loopDepth_;
 
@@ -278,7 +278,7 @@ ParseResult<ForStmt*> Parser::parseForStmt() {
         if (body.ok()) cstmt->body = body.get();
 
         --loopDepth_;
-        return ParseResult<StmtNode*>(cstmt);
+        return cstmt;
     }
 
     auto* stmt = ctx_.make<ForStmt>(loc);
@@ -293,7 +293,7 @@ ParseResult<ForStmt*> Parser::parseForStmt() {
         if (!check(TokenKind::Identifier)) {
             expectedError("loop variable");
             --loopDepth_;
-            return ParseResult<ForStmt*>::error();
+            return nullptr;
         }
         std::string_view first = ctx_.intern(current().text());
         advance();
@@ -304,7 +304,7 @@ ParseResult<ForStmt*> Parser::parseForStmt() {
             if (!check(TokenKind::Identifier)) {
                 expectedError("value variable after ','");
                 --loopDepth_;
-                return ParseResult<ForStmt*>::error();
+                return nullptr;
             }
             stmt->valueVar = ctx_.intern(current().text());
             advance();
@@ -314,7 +314,7 @@ ParseResult<ForStmt*> Parser::parseForStmt() {
     }
 
     if (!expectConsume(TokenKind::KW_in, "expected 'in' in for loop"))
-        return ParseResult<ForStmt*>::error();
+        return nullptr;
 
     auto iter = parseExpr();
     if (iter.ok()) stmt->iterable = iter.get();

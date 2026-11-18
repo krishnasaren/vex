@@ -1,0 +1,4 @@
+// VEX Standard Library — std::string
+@extern("vex_str_contains")    fn contains(haystack: str, needle: str) -> bool
+@extern("vex_str_starts_with") fn startsWith(s: str, prefix: str) -> bool
+@extern("vex_str_ends_with")   fn endsWith(s: str, suffix: str) -> bool

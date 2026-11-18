@@ -1,0 +1,6 @@
+// VEX Standard Library — std::io
+@extern("vex_println") fn println(s: str)
+@extern("vex_print")   fn print(s: str)
+@extern("vex_eprintln") fn eprintln(s: str)
+@extern("vex_eprint")   fn eprint(s: str)
+@extern("vex_flush_stdout") fn flush()

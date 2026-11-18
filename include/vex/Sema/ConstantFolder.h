@@ -6,6 +6,9 @@
 // vex/Sema/ConstantFolder.h  — Compile-time constant folding pass
 // ============================================================================
 #include "vex/Sema/SemaContext.h"
+#include "vex/AST/Decl.h"
+#include "vex/AST/Expr.h"
+#include "vex/AST/Stmt.h"
 #include "vex/AST/Expr.h"
 
 namespace vex {

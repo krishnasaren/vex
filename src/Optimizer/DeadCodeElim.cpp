@@ -1,1 +1,2 @@
-// src/Optimizer/DeadCodeElim.cpp
+#include "vex/Optimizer/DeadCodeElim.h"
+namespace vex {}

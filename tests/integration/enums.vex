@@ -1,1 +1,17 @@
-// tests/integration/enums.vex
+// Test: Enums
+import std::io
+
+enum Direction { North, South, East, West }
+
+fn dirName(d: Direction) -> str {
+    match d {
+        Direction::North => { "north" }
+        Direction::South => { "south" }
+        Direction::East  => { "east" }
+        Direction::West  => { "west" }
+    }
+}
+
+fn main() {
+    io::println("enums ok")
+}

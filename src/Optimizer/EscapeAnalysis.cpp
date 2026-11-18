@@ -1,1 +1,2 @@
-// src/Optimizer/EscapeAnalysis.cpp
+#include "vex/Optimizer/EscapeAnalysis.h"
+namespace vex {}

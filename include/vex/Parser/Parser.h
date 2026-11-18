@@ -187,7 +187,7 @@ private:
     ParseResult<IfStmt*>        parseIfStmt();
     ParseResult<WhileStmt*>     parseWhileStmt();
     ParseResult<DoWhileStmt*>   parseDoWhileStmt();
-    ParseResult<ForStmt*>       parseForStmt();
+    ParseResult<StmtNode*>      parseForStmt();
     ParseResult<LoopStmt*>      parseLoopStmt();
     ParseResult<MatchStmt*>     parseMatchStmt();
     ParseResult<ReturnStmt*>    parseReturnStmt();
@@ -254,7 +254,7 @@ private:
         ExprNode*    value;
         SourceLocation loc;
     };
-    std::vector<ParsedArg> parseArgList();
+    std::vector<CallArg> parseArgList();
 
     // ── f-string segment parsing ──────────────────────────────────────────────
 

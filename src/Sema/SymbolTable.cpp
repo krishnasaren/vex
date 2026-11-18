@@ -1,56 +1,53 @@
 // src/Sema/SymbolTable.cpp
-
-
-
-
 #include "vex/Sema/SymbolTable.h"
-#include <cassert>
 
 namespace vex {
 
+// ── Scope ─────────────────────────────────────────────────────────────────────
+
 Symbol* Scope::define(std::unique_ptr<Symbol> sym) {
-    auto it = symbols_.find(std::string(sym->name()));
-    if (it != symbols_.end()) return nullptr; // already defined
-    Symbol* raw = sym.get();
-    symbols_.emplace(std::string(sym->name()), std::move(sym));
-    return raw;
+    auto name = std::string(sym->name());
+    auto [it, inserted] = symbols_.emplace(name, std::move(sym));
+    return inserted ? it->second.get() : nullptr;
 }
 
 Symbol* Scope::lookupLocal(std::string_view name) const {
     auto it = symbols_.find(std::string(name));
-    return it != symbols_.end() ? it->second.get() : nullptr;
+    return (it != symbols_.end()) ? it->second.get() : nullptr;
 }
 
 Symbol* Scope::lookup(std::string_view name) const {
-    if (auto* s = lookupLocal(name)) return s;
-    return parent_ ? parent_->lookup(name) : nullptr;
+    if (auto* sym = lookupLocal(name)) return sym;
+    if (parent_) return parent_->lookup(name);
+    return nullptr;
 }
 
-// ── SymbolTable ──────────────────────────────────────────────────────────────
+// ── SymbolTable ───────────────────────────────────────────────────────────────
 
 SymbolTable::SymbolTable() {
-    // Create global module scope
-    scopes_.push_back(std::make_unique<Scope>(Scope::Kind::Module, nullptr));
-    current_ = module_ = scopes_.back().get();
-    depth_ = 0;
+    auto moduleScope = std::make_unique<Scope>(Scope::Kind::Module, nullptr);
+    module_  = moduleScope.get();
+    current_ = module_;
+    scopes_.push_back(std::move(moduleScope));
+    depth_ = 1;
 }
 
 void SymbolTable::pushScope(Scope::Kind kind) {
-    scopes_.push_back(std::make_unique<Scope>(kind, current_));
-    current_ = scopes_.back().get();
+    auto scope = std::make_unique<Scope>(kind, current_);
+    current_ = scope.get();
+    scopes_.push_back(std::move(scope));
     ++depth_;
 }
 
 void SymbolTable::popScope() {
-    assert(current_ != module_ && "Cannot pop module scope");
-    current_ = current_->parent();
+    if (scopes_.size() <= 1) return;
+    scopes_.pop_back();
+    current_ = scopes_.back().get();
     --depth_;
 }
 
-Symbol* SymbolTable::define(SymbolKind kind,
-                             std::string_view name,
-                             DeclNode* decl,
-                             SourceLocation loc) {
+Symbol* SymbolTable::define(SymbolKind kind, std::string_view name,
+                             DeclNode* decl, SourceLocation loc) {
     auto sym = std::make_unique<Symbol>(kind, name, decl, loc);
     return current_->define(std::move(sym));
 }

@@ -1,1 +1,2 @@
-// src/Linker/SharedLibEmitter.cpp
+#include "vex/Linker/SharedLibEmitter.h"
+namespace vex {}

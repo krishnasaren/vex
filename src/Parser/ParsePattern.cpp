@@ -116,36 +116,73 @@ ParseResult<PatternNode*> Parser::parsePatternAtom() {
         std::string_view name = ctx_.intern(current().text());
         advance();
 
-        // Enum variant with data: VariantName(fields...)
-        if (check(TokenKind::LParen)) {
-            advance();
-            auto* ep = ctx_.make<EnumPattern>(loc);
-            ep->name = name;
-            while (!check(TokenKind::RParen) && !atEnd()) {
-                EnumFieldPattern efp;
-                efp.loc = currentLoc();
-                // Named field: fieldName: pat
-                if (check(TokenKind::Identifier) && peek(1).kind() == TokenKind::Colon) {
-                    efp.name   = ctx_.intern(current().text());
-                    efp.isNamed = true;
-                    advance(); advance();
-                }
-                auto p = parseOrPattern();
-                if (p.ok()) efp.pattern = p.get();
-                ep->fields.push_back(efp);
-                if (!match(TokenKind::Comma)) break;
-            }
-            expectConsume(TokenKind::RParen);
-            return ParseResult<PatternNode*>(ep);
-        }
 
         // Enum variant no data: just a name — could be EnumPattern or binding
         // Sema resolves whether it's a variant or a new binding
         // For now treat as binding unless it starts with uppercase
-        bool looksLikeVariant = (!name.empty() && name[0] >= 'A' && name[0] <= 'Z');
+        // Consume qualified path segments: Direction::North, std::Option::Some, etc.
+        // We build a full qualified name from all `::` segments.
+        std::string qualName(name);
+        while (check(TokenKind::ColonColon)) {
+            advance();  // consume '::'
+            if (!check(TokenKind::Identifier) && !isKeyword(current().kind())) break;
+            qualName += "::";
+            qualName += std::string(current().text());
+            advance();
+        }
+        // Determine the short name (last segment) for the EnumPattern
+        std::string_view lastName = ctx_.intern(qualName);
+        size_t lastSep = qualName.rfind("::");
+        if (lastSep != std::string::npos)
+            name = ctx_.intern(qualName.substr(lastSep + 2));
+
+        bool looksLikeVariant = (!name.empty() && (name[0] >= 'A' && name[0] <= 'Z'))
+                               || lastSep != std::string::npos;
         if (looksLikeVariant) {
+            // Check for enum data: Variant(fields)  or  Variant { fields }
+            if (check(TokenKind::LParen)) {
+                advance();
+                auto* ep = ctx_.make<EnumPattern>(loc);
+                ep->name = lastName;
+                while (!check(TokenKind::RParen) && !atEnd()) {
+                    EnumFieldPattern efp;
+                    efp.loc = currentLoc();
+                    if (check(TokenKind::Identifier) && peek(1).kind() == TokenKind::Colon) {
+                        efp.name    = ctx_.intern(current().text());
+                        efp.isNamed = true;
+                        advance(); advance();
+                    }
+                    auto p = parseOrPattern();
+                    if (p.ok()) efp.pattern = p.get();
+                    ep->fields.push_back(efp);
+                    if (!match(TokenKind::Comma)) break;
+                }
+                expectConsume(TokenKind::RParen);
+                return ParseResult<PatternNode*>(ep);
+            }
+            if (check(TokenKind::LBrace)) {
+                // Struct-variant pattern: Variant { field: pat, .. }
+                advance();
+                auto* sp = ctx_.make<StructPattern>(loc);
+                sp->typeName = lastName;
+                while (!check(TokenKind::RBrace) && !atEnd()) {
+                    if (check(TokenKind::DotDot)) { advance(); sp->hasIgnoreRest=true; break; }
+                    StructFieldPattern sfp;
+                    sfp.loc = currentLoc();
+                    if (!check(TokenKind::Identifier)) break;
+                    sfp.fieldName = ctx_.intern(current().text()); advance();
+                    if (match(TokenKind::Colon)) {
+                        auto p = parseOrPattern();
+                        if (p.ok()) sfp.pattern = p.get();
+                    }
+                    sp->fields.push_back(sfp);
+                    if (!match(TokenKind::Comma)) break;
+                }
+                expectConsume(TokenKind::RBrace);
+                return ParseResult<PatternNode*>(sp);
+            }
             auto* ep = ctx_.make<EnumPattern>(loc);
-            ep->name = name;
+            ep->name = lastName;
             return ParseResult<PatternNode*>(ep);
         }
 

@@ -9,6 +9,7 @@
 #include "vex/Sema/SemaContext.h"
 #include "vex/AST/Stmt.h"
 #include "vex/AST/Expr.h"
+#include "vex/AST/Decl.h"
 #include <vector>
 
 namespace vex {

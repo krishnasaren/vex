@@ -425,10 +425,47 @@ IRValue* IRGen::lowerExpr(ExprNode* expr) {
 
         case ASTNodeKind::CallExpr: {
             auto* e = static_cast<CallExpr*>(expr);
-            auto* callee = lowerExpr(e->callee);
             std::vector<IRValue*> args;
             for (auto& arg : e->args)
                 args.push_back(lowerExpr(arg.value));
+            // If callee is a ModulePathExpr, use the mangled name directly
+            if (e->callee && e->callee->is(ASTNodeKind::ModulePathExpr)) {
+                auto* pe = static_cast<ModulePathExpr*>(e->callee);
+                std::string name;
+                for (size_t si = 0; si < pe->segments.size(); ++si) {
+                    if (si) name += "__";
+                    name += std::string(pe->segments[si]);
+                }
+                // Map to runtime name
+                static const struct { const char* vex; const char* rt; } rtMap[] = {
+                    {"io__println",   "vex_println"},
+                    {"io__print",     "vex_print"},
+                    {"io__eprintln",  "vex_eprintln"},
+                    {"io__eprint",    "vex_eprint"},
+                    {"io__readLine",  "vex_readline"},
+                    {"io__flush",     "vex_flush_stdout"},
+                    {"os__exit",      "vex_process_exit"},
+                    {"math__sqrt",    "vex_math_sqrt"},
+                    {"math__abs",     "vex_math_abs_f64"},
+                    {"math__floor",   "vex_math_floor"},
+                    {"math__ceil",    "vex_math_ceil"},
+                    {"math__round",   "vex_math_round"},
+                    {"math__pow",     "vex_math_pow"},
+                    {"math__sin",     "vex_math_sin"},
+                    {"math__cos",     "vex_math_cos"},
+                    {"math__tan",     "vex_math_tan"},
+                    {"math__log",     "vex_math_log"},
+                    {"math__log2",    "vex_math_log2"},
+                    {"math__random",  "vex_random_f64"},
+                    {"time__now",     "vex_time_now_ms"},
+                    {"time__sleep",   "vex_time_sleep_ms"},
+                    {nullptr, nullptr}
+                };
+                for (auto* p = rtMap; p->vex; ++p)
+                    if (name == p->vex) { name = p->rt; break; }
+                return ctx_.emit<IRCallInstr>(name, args);
+            }
+            auto* callee = lowerExpr(e->callee);
             return ctx_.emit<IRCallInstr>(callee, args);
         }
 
@@ -524,6 +561,50 @@ IRValue* IRGen::lowerExpr(ExprNode* expr) {
         case ASTNodeKind::LambdaExpr: {
             auto* e = static_cast<LambdaExpr*>(expr);
             return ctx_.emitLambda(e);
+        }
+
+        case ASTNodeKind::ModulePathExpr: {
+            // A module path expression (e.g. io::println) used as a value
+            // is an indirect reference to a function or value in another module.
+            // We lower it to a string key that the CallExpr handler uses.
+            auto* e = static_cast<ModulePathExpr*>(expr);
+            // Build mangled name: segments joined by _
+            std::string name;
+            for (size_t si = 0; si < e->segments.size(); ++si) {
+                if (si) name += "__";
+                name += std::string(e->segments[si]);
+            }
+            // Map well-known stdlib paths to runtime ABI names
+            static const struct { const char* vex; const char* rt; } rtMap[] = {
+                {"io__println",   "vex_println"},
+                {"io__print",     "vex_print"},
+                {"io__eprintln",  "vex_eprintln"},
+                {"io__eprint",    "vex_eprint"},
+                {"io__readLine",  "vex_readline"},
+                {"io__flush",     "vex_flush_stdout"},
+                {"os__exit",      "vex_process_exit"},
+                {"os__args",      "vex_env_args"},
+                {"os__env",       "vex_env_get"},
+                {"math__sqrt",    "vex_math_sqrt"},
+                {"math__abs",     "vex_math_abs_f64"},
+                {"math__floor",   "vex_math_floor"},
+                {"math__ceil",    "vex_math_ceil"},
+                {"math__round",   "vex_math_round"},
+                {"math__pow",     "vex_math_pow"},
+                {"math__sin",     "vex_math_sin"},
+                {"math__cos",     "vex_math_cos"},
+                {"math__tan",     "vex_math_tan"},
+                {"math__log",     "vex_math_log"},
+                {"math__log2",    "vex_math_log2"},
+                {"math__random",  "vex_random_f64"},
+                {"time__now",     "vex_time_now_ms"},
+                {"time__sleep",   "vex_time_sleep_ms"},
+                {nullptr, nullptr}
+            };
+            for (auto* p = rtMap; p->vex; ++p)
+                if (name == p->vex) { name = p->rt; break; }
+            // Return as a string constant that CallExpr can read as the callee name
+            return ctx_.emit<IRStringConstInstr>(name);
         }
 
         case ASTNodeKind::SelfExpr:

@@ -1,1 +1,2 @@
-// src/Optimizer/LTOManager.cpp
+#include "vex/Optimizer/LTOManager.h"
+namespace vex {}

@@ -1,4 +1,5 @@
 #pragma once
+#include "vex/AST/Decl.h"
 // include/vex/Module/PackageResolver.h
 
 

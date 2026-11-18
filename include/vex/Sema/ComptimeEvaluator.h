@@ -52,7 +52,7 @@ private:
     SemaContext& ctx_;
     std::unordered_map<std::string, ComptimeValue> env_;
 
-    ComptimeValue evalLiteral(LiteralExpr* e);
+    ComptimeValue evalLiteral(IntLitExpr* e);
     ComptimeValue evalBinary(BinaryExpr* e);
     ComptimeValue evalUnary(UnaryExpr* e);
     ComptimeValue evalIdent(IdentExpr* e);
@@ -60,7 +60,7 @@ private:
     ComptimeValue evalIf(IfExpr* e);
     ComptimeValue evalBlock(BlockExpr* e);
     ComptimeValue evalIndex(IndexExpr* e);
-    ComptimeValue evalArray(ArrayExpr* e);
+    ComptimeValue evalArray(ListExpr* e);
     ComptimeValue evalCast(CastExpr* e);
 };
 
